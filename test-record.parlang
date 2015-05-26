@@ -1,0 +1,13 @@
+/* -*- javascript-mode -*- */
+
+DEFINE RECORD Point {
+    x: float64
+    y: float64;
+} END
+
+DEFINE RECORD Sphere {
+    r: float64;
+    c: Point
+
+    IMPORT NONE
+} END
