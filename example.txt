@@ -1,0 +1,126 @@
+
+These struct definitions:
+
+  @shared struct Point {
+    x: float64
+    y: float64
+
+    @get(self) { return { x: SELF_x, y: SELF_y } }
+  } @end
+
+  @shared struct Sphere {
+    r: float64
+    c: Point
+  } @end
+
+  @shared struct Spheres {
+    a: Sphere
+    b: Sphere
+    m: atomic int32
+  } @end
+
+turn into these definitions:
+
+  const Point = {
+      SIZE:8,
+      ALIGN:8,
+
+      x: function(self) { return _mem_i32[(self+0)>>2] },
+      y: function(self) { return _mem_i32[(self+4)>>2] },
+
+      set_x: function(self, v) { _mem_i32[(self+0)>>2] = v; },
+      set_y: function(self, v) { _mem_i32[(self+4)>>2] = v; },
+
+      _get: function (self) { x: Point.x(self), y: Point.y(self) } }
+  };
+
+  const Sphere = {
+      SIZE: 16,
+      ALIGN: 8,
+
+      c: function (self) { Point._get(self+8) }
+
+      c_x: function (self) { return _mem_i32[(self+8)>>2]; },
+      c_y: function (self) { return _mem_i32[(self+12)>>2]; },
+      r: function (self) { return _mem_f64[(self+8)>>3]; },
+
+      set_c_x: function (self, v) { _mem_i32[(self+8)>>2] = v; },
+      set_c_y: function (self, v) { _mem_i32[(self+12)>>2] = v; },
+      set_r: function(self, v) { _mem_f64[(self+8)>>3] = v; },
+
+      ref_c: function(self) { return self+8 }
+  };
+
+  const Spheres = {
+      SIZE = 40,
+      ALIGN = 8,
+
+      ref_a: function(self) { return self },
+      ref_b: function(self) { return self+16 },
+
+      a_c: function (self) { Point._get(self+8) }
+      b_c: function (self) { Point._get(self+24) }
+
+      ref_a_c: function (self) { return self+8 },
+      ref_b_c: function (self) { return self+24 }.
+
+      ... etc, lots of methods
+
+      m: function(self) { return Atomics.load(_mem_i32, (self+32)>>2) }
+      set_m: function(self, v) { Atomics.store(_mem_i32, (self+32)>>2, v) }
+      add_m: function(self, v) { return Atomics.add(_mem_i32, (self+32)>>2, v) }
+      ...
+      compareExchange_m: function(p, o, n) { return Atomics.compareExchange(_mem_i32, (self+32)>>2, o, n) }
+  };
+
+
+
+----------------------------------------------------------------------
+
+Example:
+
+  @shared struct Vec3 {
+    x: float64
+    y: float64
+    z: float64
+  } @end
+
+  @shared struct Material {
+    diffuse:   Vec3
+    specular:  Vec3
+    shininess: float64
+    ambient:   Vec3
+    mirror:    float64
+  } @end
+  
+  @shared class Surface {
+    m:Material
+
+    @method intersect(self, a, b, c, d) { throw "Pure" }
+    @method normal(self) { throw "Pure" }
+  } @end
+  
+  @shared class Sphere extends Surface {
+    center: Vec3
+    radius: float64
+
+    @method intersect(self, a, b, c, d) { ... }
+    @method normal(self) { ... }
+  } @end
+
+  @shared class Triangle extends Surface {
+    v1: Vec3
+    v2: Vec3
+    v3: Vec3
+
+    @method intersect(self, a, b, c, d) { ... }
+    @method normal(self) { ... }
+  } @end
+
+  @shared class Scene extends Surface {
+    objs: array(Surface)
+
+    @method intersect(self, a, b, c, d) { ... }
+    @method normal(self) { ... }
+  } @end
+

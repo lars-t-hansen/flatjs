@@ -1,13 +1,209 @@
 /* -*- javascript-mode -*- */
 
-DEFINE RECORD Point {
+@shared struct Vec3 {
     x: float64
-    y: float64;
-} END
+    y: float64
+    z: float64
 
-DEFINE RECORD Sphere {
-    r: float64;
-    c: Point
+    @get(self) {
+	return DL3(SELF_x, SELF_y, SELF_z);
+    }
 
-    IMPORT NONE
-} END
+    @set(self, ...args) {
+	if (args.length == 1) {
+	    var v = args[0];
+	    x = v.x;
+	    y = v.y;
+	    z = v.z;
+	}
+	else {
+	    x = args[0];
+	    y = args[1];
+	    z = args[2];
+	}
+    }
+} @end
+
+// Avoid intermediate DL3 objects
+
+function subref(a, b) { return DL3(a.x-Vec3.x(b), a.y-Vec3.y(b), a.z-Vec3.z(b)); }
+function subrefref(a, b) { return DL3(Vec3.x(a)-Vec3.x(b), Vec3.y(a)-Vec3.y(b), Vec3.z(a)-Vec3.z(b)); }
+function mulrefi(a, c) { return DL3(Vec3.x(a)*c, Vec3.y(a)*c, Vec3.z(a)*c); }
+
+@shared struct Material {
+    diffuse:   Vec3
+    specular:  Vec3
+    shininess: float64
+    ambient:   Vec3
+    mirror:    float64
+
+    @set(self, diffuse, specular, shininess, ambient, mirror) {
+	SELF_set_diffuse(diffuse);
+	SELF_set_specular(specular);
+	SELF_set_shininess(shininess);
+	SELF_set_ambient(ambient);
+	SELF_set_mirror(mirror);
+    }
+} @end
+
+function MaterialV(diffuse, specular, shininess, ambient, mirror) {
+    this.diffuse = diffuse;
+    this.specular = specular;
+    this.shininess = shininess;
+    this.ambient = ambient;
+    this.mirror = mirror;
+}
+
+@shared class Surface {
+    material: Material
+
+    @method init(self, material) {
+	SELF_set_material(material)
+    }
+
+    @method intersect(self, eye, ray, min, max) { throw "Pure: Surface.intersect" }
+    @method normal(self, p) { throw "Pure: Surface.normal" }
+} @end
+
+@shared class Scene extends Surface {
+    length: int32
+    objects: array(Surface)
+
+    @method init(self, objects) {
+        // No super call, leave it uninitialized
+	var len = objects.length;
+	SELF_set_length(len)
+	var os = @new array(Surface, len)
+	for ( var i=0 ; i < len ; i++ )
+	    Surface.array_set(os, i, objects[i]);
+	SELF_set_objects(objects)
+    }
+
+    @method intersect(self, eye, ray, min, max) {
+	var min_obj = NULL;
+	var min_dist = SENTINEL;
+
+	var objs = SELF_objects;
+	for ( var idx=0, limit=SELF_length ; idx < limit ; idx++ ) {
+	    var tmp = Surface.intersect(objs + idx*Surface.SIZE, eye, ray, min, max);
+	    var obj = tmp.obj;
+	    var dist = tmp.dist;
+	    if (obj)
+		if (dist >= min && dist < max)
+		    if (dist < min_dist) {
+			min_obj = obj;
+			min_dist = dist;
+		    }
+	}
+	return {obj:min_obj, dist:min_dist};
+    }
+
+} @end
+
+@shared class Sphere extends Surface {
+    center: Vec3
+    radius: float64
+
+    @method init(self, material, center, radius) {
+	Surface.init_impl(self, material)
+	SELF_set_center(center)
+	SELF_set_radius(radius)
+    }
+
+    @method intersect(self, eye, ray, min, max) {
+	var DdotD = dot(ray, ray);
+	var EminusC = subref(eye, SELF_ref_center);
+	var B = dot(ray, EminusC);
+	var disc = B*B - DdotD*(dot(EminusC,EminusC) - SELF_radius*SELF_radius);
+	if (disc < 0.0)
+	    return {obj:NULL, dist:0};
+	var s1 = (-B + Math.sqrt(disc))/DdotD;
+	var s2 = (-B - Math.sqrt(disc))/DdotD;
+	// Here return the smallest of s1 and s2 after filtering for _min and _max
+	if (s1 < min || s1 > max)
+	    s1 = SENTINEL;
+	if (s2 < min || s2 > max)
+	    s2 = SENTINEL;
+	var _dist = Math.min(s1,s2);
+	if (_dist == SENTINEL)
+	    return {obj:NULL, dist:0};
+	return {obj:self, dist:_dist};
+    }
+
+    @method normal(self, p) {
+	return divi(subref(p, SELF_ref_center), SELF_radius);
+    }
+} @end
+
+@shared class Triangle extends Surface {
+
+    @method init(self, material, v1, v2, v3) {
+	Surface.init_impl(self, material)
+	SELF_set_v1(v1);
+	SELF_set_v2(v2);
+	SELF_set_v3(v3);
+    }
+
+    @method intersect(self, eye, ray, min, max) {
+	// TODO: observe that values that do not depend on g, h, and i can be precomputed
+	// and stored with the triangle (for a given eye position), at some (possibly significant)
+	// space cost.  Notably the numerator of "t" is invariant, as are many factors of the
+	// numerator of "gamma".
+	var a = SELF_v1_x - SELF_v2_x;
+	var b = SELF_v1_y - SELF_v2_y;
+	var c = SELF_v1_z - SELF_v2_z;
+	var d = SELF_v1_x - SELF_v3_x;
+	var e = SELF_v1_y - SELF_v3_y;
+	var f = SELF_v1_z - SELF_v3_z;
+	var g = ray.x;
+	var h = ray.y;
+	var i = ray.z;
+	var j = SELF_v1_x - eye.x;
+	var k = SELF_v1_y - eye.y;
+	var l = SELF_v1_z - eye.z;
+	var M = a*(e*i - h*f) + b*(g*f - d*i) + c*(d*h - e*g);
+	var t = -((f*(a*k - j*b) + e*(j*c - a*l) + d*(b*l - k*c))/M);
+	if (t < min || t > max)
+	    return {obj:NULL,dist:0};
+	var gamma = (i*(a*k - j*b) + h*(j*c - a*l) + g*(b*l - k*c))/M;
+	if (gamma < 0 || gamma > 1.0)
+	    return {obj:NULL,dist:0};
+	var beta = (j*(e*i - h*f) + k*(g*f - d*i) + l*(d*h - e*g))/M;
+	if (beta < 0.0 || beta > 1.0 - gamma)
+	    return {obj:NULL,dist:0};
+	return {obj:self, dist:t};
+    }
+
+    @method normal(self, p) {
+	// TODO: Observe that the normal is invariant and can be stored with the triangle
+	return normalize(cross(subrefref(SELF_ref_v2, SELF_ref_v1), subrefref(SELF_ref_v3, SELF_ref_v1)));
+    }
+
+} @end
+
+@shared class Bitmap {
+    data: array(int32)
+    height: int32
+    width: int32
+
+    @method init(self, height, width, color) {
+	SELF_set_height(height)
+	SELF_set_width(width)
+	var data = @new array(int32, height*width)
+	var c = (255<<24)|((255*color.z)<<16)|((255*color.y)<<8)|(255*color.x)
+	for ( var i=0, l=width*height ; i < l ; i++ )
+	    array_int32_set(data, i, c);
+	SELF_set_data(data)
+	return self
+    }
+
+    // For debugging only
+    @method ref(self, y, x) {
+	return Parlang.int32.array_get(SELF_data, (SELF_height-y)*SELF_width+x);
+    }
+
+    // Not a hot function
+    @method setColor(self, y, x, v) {
+	Parlang.int32.array_set(SELF_data, (SELF_height-y)*SELF_width+x] = (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x);
+    }
+} @end

@@ -45,7 +45,6 @@ function dot(a, b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 	return DL3(SELF_x, SELF_y, SELF_z);
     }
 
-    /// oops, ... is not allowed yet
     @set(self, ...args) {
 	if (args.length == 1) {
 	    var v = args[0];
@@ -63,9 +62,9 @@ function dot(a, b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 
 // Avoid intermediate DL3 objects
 
-function subref(a, b) { return DL3(a.x-Vec3_x(b), a.y-Vec3_y(b), a.z-Vec3_z(b)); }
-function subrefref(a, b) { return DL3(Vec3_x(a)-Vec3_x(b), Vec3_y(a)-Vec3_y(b), Vec3_z(a)-Vec3_z(b)); }
-function mulrefi(a, c) { return DL3(Vec3_x(a)*c, Vec3_y(a)*c, Vec3_z(a)*c); }
+function subref(a, b) { return DL3(a.x-Vec3.x(b), a.y-Vec3.y(b), a.z-Vec3.z(b)); }
+function subrefref(a, b) { return DL3(Vec3.x(a)-Vec3.x(b), Vec3.y(a)-Vec3.y(b), Vec3.z(a)-Vec3.z(b)); }
+function mulrefi(a, c) { return DL3(Vec3.x(a)*c, Vec3.y(a)*c, Vec3.z(a)*c); }
 
 @shared struct Material {
     diffuse:   Vec3
@@ -98,8 +97,8 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	SELF_set_material(material)
     }
 
-    @method intersect(self, eye, ray, min, max) { throw "Pure: Surface_intersect" }
-    @method normal(self, p) { throw "Pure: Surface_normal" }
+    @method intersect(self, eye, ray, min, max) { throw "Pure: Surface.intersect" }
+    @method normal(self, p) { throw "Pure: Surface.normal" }
 } @end
 
 @shared class Scene extends Surface {
@@ -111,8 +110,8 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	SELF_set_length(len)
 	var os = @new array(Surface, len)
 	for ( var i=0 ; i < len ; i++ )
-	    array_Surface_set(os, i, objects[i]);
-	SELF_objects_set(objects)
+	    Surface.array_set(os, i, objects[i]);
+	SELF_set_objects(objects)
     }
 
     @method intersect(self, eye, ray, min, max) {
@@ -121,7 +120,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
 	var objs = SELF_objects;
 	for ( var idx=0, limit=SELF_length ; idx < limit ; idx++ ) {
-	    var tmp = Surface_intersect(array_Surface_ref(objs, idx), eye, ray, min, max);
+	    var tmp = Surface.intersect(objs + idx*Surface.SIZE, eye, ray, min, max);
 	    var obj = tmp.obj;
 	    var dist = tmp.dist;
 	    if (obj)
@@ -141,14 +140,14 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     radius: float64
 
     @method init(self, material, center, radius) {
-	Surface_init_impl(self, material)
+	Surface.init_impl(self, material)
 	SELF_set_center(center)
 	SELF_set_radius(radius)
     }
 
     @method intersect(self, eye, ray, min, max) {
 	var DdotD = dot(ray, ray);
-	var EminusC = subref(eye, SELF_center_REF);
+	var EminusC = subref(eye, SELF_ref_center);
 	var B = dot(ray, EminusC);
 	var disc = B*B - DdotD*(dot(EminusC,EminusC) - SELF_radius*SELF_radius);
 	if (disc < 0.0)
@@ -167,14 +166,14 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     }
 
     @method normal(self, p) {
-	return divi(subref(p, SELF_center_REF), SELF_radius);
+	return divi(subref(p, SELF_ref_center), SELF_radius);
     }
 } @end
 
 @shared class Triangle extends Surface {
 
     @method init(self, material, v1, v2, v3) {
-	Surface_init_impl(self, material)
+	Surface.init_impl(self, material)
 	SELF_set_v1(v1);
 	SELF_set_v2(v2);
 	SELF_set_v3(v3);
@@ -212,7 +211,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     @method normal(self, p) {
 	// TODO: Observe that the normal is invariant and can be stored with the triangle
-	return normalize(cross(subrefref(SELF_v2_REF, SELF_v1_REF), subrefref(SELF_v3_REF, SELF_v1_REF)));
+	return normalize(cross(subrefref(SELF_ref_v2, SELF_ref_v1), subrefref(SELF_ref_v3, SELF_ref_v1)));
     }
 
 } @end
@@ -235,12 +234,12 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     // For debugging only
     @method ref(self, y, x) {
-	return array_int32_ref(SELF_data, (SELF_height-y)*SELF_width+x);
+	return Parlang.int32.array_get(SELF_data, (SELF_height-y)*SELF_width+x);
     }
 
     // Not a hot function
-    @method setColor(y, x, v) {
-	array_int32_set(SELF_data, (SELF_height-y)*SELF_width+x] = (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x);
+    @method setColor(self, y, x, v) {
+	Parlang.int32.array_set(SELF_data, (SELF_height-y)*SELF_width+x] = (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x);
     }
 } @end
 
@@ -252,10 +251,19 @@ const g_right = 2;
 const g_top = 1.5;
 const g_bottom = -1.5;
 
+const sab = new SharedArrayBuffer(height*width*4 + 65536);
+
+Parlang.init(sab, true);
 const bits = Bitmap_init(@new Bitmap, height, width, DL3(152.0/256.0, 251.0/256.0, 152.0/256.0));
 
 function main() {
+
     setStage();
+
+    // No workers, we do this all on the main thread, but the data is
+    // in shared memory.  Normally we would otherwise communicate
+    // [sab, width, height, bits] and maybe something coordinative.
+
     var then = Date.now();
     trace(0, height);
     var now = Date.now();
@@ -263,7 +271,8 @@ function main() {
     var mycanvas = document.getElementById("mycanvas");
     var cx = mycanvas.getContext('2d');
     var id  = cx.createImageData(width, height);
-    id.data.set(new Uint8Array(bits.data.buffer));
+    // FIXME: will this work properly?
+    id.data.set(new SharedUint8Array(bits.data.buffer));
     cx.putImageData( id, 0, 0 );
     document.getElementById("mycaption").innerHTML = "Time=" + (now - then) + "ms";
 
@@ -287,8 +296,8 @@ const blue = DL3(0.0, 0.0, 1.0);
 
 // Not restricted to a rectangle, actually
 function rectangle(world, m, v1, v2, v3, v4) {
-    world.push(Triangle_init(@new Triangle, m, v1, v2, v3));
-    world.push(Triangle_init(@new Triangle, m, v1, v3, v4));
+    world.push(Triangle.init(@new Triangle, m, v1, v2, v3));
+    world.push(Triangle.init(@new Triangle, m, v1, v3, v4));
 }
 
 // Vertices are for front and back faces, both counterclockwise as seen
@@ -318,21 +327,21 @@ function setStage() {
 
     var world = [];
 
-    world.push(Sphere_init(@new Sphere, m1, DL3(-1, 1, -9), 1));
-    world.push(Sphere_init(@new Sphere, m2, DL3(1.5, 1, 0), 0.75));
-    world.push(Sphere_init(@new Triangle, m1, DL3(-1,0,0.75), DL3(-0.75,0,0), DL3(-0.75,1.5,0)));
-    world.push(Triangle_init(@new Triangle, m3, DL3(-2,0,0), DL3(-0.5,0,0), DL3(-0.5,2,0)));
+    world.push(Sphere.init(@new Sphere, m1, DL3(-1, 1, -9), 1));
+    world.push(Sphere.init(@new Sphere, m2, DL3(1.5, 1, 0), 0.75));
+    world.push(Sphere.init(@new Triangle, m1, DL3(-1,0,0.75), DL3(-0.75,0,0), DL3(-0.75,1.5,0)));
+    world.push(Triangle.init(@new Triangle, m3, DL3(-2,0,0), DL3(-0.5,0,0), DL3(-0.5,2,0)));
     rectangle(world, m4, DL3(-5,0,5), DL3(5,0,5), DL3(5,0,-40), DL3(-5,0,-40));
     cube(world, m5, DL3(1, 1.5, 1.5), DL3(1.5, 1.5, 1.25), DL3(1.5, 1.75, 1.25), DL3(1, 1.75, 1.5),
 	 DL3(1.5, 1.5, 0.5), DL3(1, 1.5, 0.75), DL3(1, 1.75, 0.75), DL3(1.5, 1.75, 0.5));
     for ( var i=0 ; i < 30 ; i++ )
-	world.push(Sphere_init(@new Sphere, m6, DL3((-0.6+(i*0.2)), (0.075+(i*0.05)), (1.5-(i*Math.cos(i/30.0)*0.5))), 0.075));
+	world.push(Sphere.init(@new Sphere, m6, DL3((-0.6+(i*0.2)), (0.075+(i*0.05)), (1.5-(i*Math.cos(i/30.0)*0.5))), 0.075));
     for ( var i=0 ; i < 60 ; i++ )
-	world.push(Sphere_init(@new Sphere, m7, DL3((1+0.3*Math.sin(i*(3.14/16))), (0.075+(i*0.025)), (1+0.3*Math.cos(i*(3.14/16)))), 0.025));
+	world.push(Sphere.init(@new Sphere, m7, DL3((1+0.3*Math.sin(i*(3.14/16))), (0.075+(i*0.025)), (1+0.3*Math.cos(i*(3.14/16)))), 0.025));
     for ( var i=0 ; i < 60 ; i++ )
-	world.push(Sphere_init(@new Sphere, m8, DL3((1+0.3*Math.sin(i*(3.14/16))), (0.075+((i+8)*0.025)), (1+0.3*Math.cos(i*(3.14/16)))), 0.025));
+	world.push(Sphere.init(@new Sphere, m8, DL3((1+0.3*Math.sin(i*(3.14/16))), (0.075+((i+8)*0.025)), (1+0.3*Math.cos(i*(3.14/16)))), 0.025));
 
-    this.world = Scene_init(@new Scene, world);
+    this.world = Scene.init(@new Scene, world);
 
     eye        = DL3(0.5, 0.75, 5);
     light      = DL3(g_left-1, g_top, 2);
@@ -403,16 +412,16 @@ function traceWithAntialias(hmin, hlim) {
 // for diffuse and specular lighting.
 
 function raycolor(eye, ray, t0, t1, depth) {
-    var tmp = Surface_intersect(world, eye, ray, t0, t1);
+    var tmp = Surface.intersect(world, eye, ray, t0, t1);
     var obj = tmp.obj;
     var dist = tmp.dist;
 
     if (obj) {
-	const m = Surface_material_REF(obj);
+	const m = Surface.ref_material(obj);
 	const p = add(eye, muli(ray, dist));
-	const n1 = Surface_normal(obj, p);
+	const n1 = Surface.normal(obj, p);
 	const l1 = normalize(sub(light, p));
-	var c = Material_ambient(m);
+	var c = Material.ambient(m);
 	var min_obj = NULL;
 
 	// Passing NULL here and testing for it in intersect() was intended as an optimization,
@@ -426,12 +435,12 @@ function raycolor(eye, ray, t0, t1, depth) {
 	    const diffuse = Math.max(0.0, dot(n1,l1));
 	    const v1 = normalize(neg(ray));
 	    const h1 = normalize(add(v1, l1));
-	    const specular = Math.pow(Math.max(0.0, dot(n1, h1)), Material_shininess(m));
-	    c = add(c, add(mulrefi(Material_diffuse_REF(m),diffuse), mulrefi(Material_specular_REF(m),specular)));
+	    const specular = Math.pow(Math.max(0.0, dot(n1, h1)), Material.shininess(m));
+	    c = add(c, add(mulrefi(Material.ref_diffuse(m),diffuse), mulrefi(Material.ref_specular(m),specular)));
 	    if (reflection)
-		if (depth > 0.0 && Material_mirror(m) != 0.0) {
+		if (depth > 0.0 && Material.mirror(m) != 0.0) {
 		    const r = sub(ray, muli(n1, 2.0*dot(ray, n1)));
-		    c = add(c, muli(raycolor(add(p, muli(r,EPS)), r, EPS, SENTINEL, depth-1), Material_mirror(m)));
+		    c = add(c, muli(raycolor(add(p, muli(r,EPS)), r, EPS, SENTINEL, depth-1), Material.mirror(m)));
 		}
 	}
 	return c;
