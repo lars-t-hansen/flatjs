@@ -227,19 +227,19 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	var data = @new array(int32, height*width)
 	var c = (255<<24)|((255*color.z)<<16)|((255*color.y)<<8)|(255*color.x)
 	for ( var i=0, l=width*height ; i < l ; i++ )
-	    array_int32_set(data, i, c);
+	    int32.array_set(data, i, c);
 	SELF_set_data(data)
 	return self
     }
 
     // For debugging only
     @method ref(self, y, x) {
-	return Parlang.int32.array_get(SELF_data, (SELF_height-y)*SELF_width+x);
+	return int32.array_get(SELF_data, (SELF_height-y)*SELF_width+x);
     }
 
     // Not a hot function
     @method setColor(self, y, x, v) {
-	Parlang.int32.array_set(SELF_data, (SELF_height-y)*SELF_width+x] = (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x);
+	int32.array_set(SELF_data, (SELF_height-y)*SELF_width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
     }
 } @end
 

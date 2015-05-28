@@ -39,6 +39,16 @@ examples, and demo/ for larger examples.  See a later section, TODO,
 for a run-down of missing but desirable features.
 
 
+## Primitive types
+
+There are global objects with the following names:
+  int8, uint8, int16, uint16, int32, uint32, float32, float64
+
+Each of these objects have two properties:
+  SIZE => the size in bytes of the type
+  ALIGN => the required alignment for the type
+
+
 ## Struct types
 
 A struct describes a value type (instances do not have object
@@ -70,7 +80,13 @@ identity) with named, mutable fields.
                   | "@copy" "(" "self", Parameter ")" Function-body
 
   Parameter ::= Id (":" Tokens-except-comma-or-rightparen )?
+
+  Id ::= [A-Za-z][A-Za-z0-9]*
 ```
+
+NOTE: Underscore is not a legal character in an Id.  That is because
+the underscore is used as part of the macro syntax.  It's possible to
+lift this restriction.
 
 NOTE: The annotation on the Parameter is not used by Parlang, but is
 allowed in order to interoperate with TypeScript.
@@ -196,6 +212,9 @@ Base types may be forward declared.
 Before memory for a class instance can be used as a class instance,
 the class's initInstance method must be invoked on the memory.
 
+Methods are currently always virtual except for the method called
+'init', which is not.
+
 
 ### Translation
 
@@ -205,11 +224,9 @@ globally invariant type identifier, see below.
 The fields of a supertype are prepended to the fields of the
 subtype, for purposes of layout.
   
-O_SIZE as for structs.
-
-O_ALIGN as for structs.
-
-O_ID for the type ID for the type.
+* R.SIZE as for structs.
+* R.ALIGN as for structs.
+* R.CLSID for the type ID for the type.
 
 Field getters/setters are translated as for structs.
   
@@ -239,25 +256,12 @@ length: they are simply a sequence of elements of a given type within
 memory.
 
 Allocating an array of type T of length n requires only allocating
-memory for n*T.SIZE.  (For primitive types T, use Parlang.T.SIZE
-instead, see below.)
+memory for n*T.SIZE.
 
 * R.array_get(ptr, i)  => Read the ith element of an array of R whose base address is ptr.  Not bounds checked.  If the base type of the array is a structure type this will only work if the type has a @get method.
 * R.array_set(ptr, i, v) => Set ditto / @set
 
-Note these complications, as for T.SIZE: The syntax is really clunky.
-Maybe we want macros T_array_get and T_array_set for primitive types
-T.
-
-    // For debugging only
-    @method ref(self, y, x) {
-	return Parlang.int32.array_get(SELF_data, (SELF_height-y)*SELF_width+x);
-    }
-
-    // Not a hot function
-    @method setColor(self, y, x, v) {
-	Parlang.int32.array_set(SELF_data, (SELF_height-y)*SELF_width+x] = (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x);
-    }
+These accessors are macro-expanded, as for named field accessors.
 
 
 ## @new macro
@@ -281,27 +285,6 @@ as a reference to R.Mj(self, arg, ...).
 In the special case of a field getter Mg, which takes only the self
 argument, the form of the macro invocation shall be SELF_Mg, that
 is, without the empty parameter list.
-
-
-## Pervasive accessor macros and KEEP directives
-
-By default, every function property on a type R is expanded in-line
-at the point of reference, and the function is not actually
-available as a function at run-time.
-
-To retain a function property as a function and to disable its
-inline expansion, use an @keep directive somewhere within the
-source file:
-
-```
-    Keep ::= (lookbehind EOL) "@keep" Pattern ("," Pattern)* ";"? Comment? EOL
-
-    Pattern ::= Id
-```
-
-This is a hack, really - later I want to experiment with the
-performance implications of just keeping everything, and indeed, of
-not expanding anything in-line.
 
 
 ## Environment
@@ -331,6 +314,18 @@ The allocator operates on the shared memory and is thread-safe.
 The translator has to be run on all files in the application
 simultaneously, and will resolve all types in all files.  It would
 normally output a file for each input file.
+
+
+*** WARNING The translator is currently implemented by means of a
+    	    fairly crude regular expression matcher.  Occasionally
+    	    this leads to problems.
+
+            * Do not use expressions containing commas or parentheses
+    	    in the arguments to accessor macros (including array
+    	    accessors).
+
+            * Do not split calls to accessor macros across multiple
+            lines.
 
 
 ## Type IDs
@@ -370,3 +365,4 @@ These are ideas it would be nice to support:
 * In-line fixed-length array types
 * String types
 * Instead of T.ref_fld(self) we could operate with T.offset_fld as a constant, if it matters
+* It would be useful to distinguish between '@method' and '@virtual', possibly.

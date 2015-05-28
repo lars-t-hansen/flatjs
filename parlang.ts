@@ -1,4 +1,6 @@
-//#!/usr/bin/env nodejs
+/* -*- mode: javascript -*- */
+
+// This is TypeScript 1.4 for node.js 0.10
 
 /*
  * Usage:
@@ -7,6 +9,13 @@
  * One output file will be produced for each input file.  Each input
  * file must have extension .xx.parlang, where x is typically js or
  * ts.  On output the .parlang suffix will be stripped.
+ *
+ * To compile:
+ *   tsc -t ES5 -m commonjs parlang.ts
+ *
+ * An alternative to the ad-hoc and brittle macro expansion at some of
+ * the later stages here is to emit macro definitions for sweet.js and
+ * postprocess the output with that.
  */
 
 /// <reference path='typings/node/node.d.ts' />
@@ -20,38 +29,138 @@ enum DefnKind {
 }
 
 class Defn {
-    size: number = 0;
-    align: number = 0;
+    size = 0;
+    align = 0;
 
-    constructor(public file:string, public line:number, public name:string, public kind:DefnKind) { }
+    constructor(public name:string, public kind:DefnKind) { }
 }
 
 class PrimitiveDefn extends Defn {
-    atomic: boolean = false;
+    constructor(name:string, size:number, public atomic:boolean) {
+	super(name, DefnKind.Primitive);
+	this.size = size;
+	this.align = size;
+    }
 }
 
 class UserDefn extends Defn {
     typeRef: StructDefn = null;
+    map = null;
+    live = false;
+    checked = false;
 
-    constructor(file:string, line:number, name:string, kind:DefnKind, public props:Prop[], public methods:Method[], public origin:number)  {
-	super(file, line, name, kind);
+    constructor(public file:string, public line:number, name:string, kind:DefnKind, public props:Prop[], public methods:Method[], public origin:number)  {
+	super(name, kind);
+    }
+
+    findAccessibleFieldFor(operation:string, prop:string) {
+	switch (operation) {
+	case "get_":
+	case "set_":
+	case "ref_":
+	    return this.map[prop];
+	default:
+	    return null;
+	}
     }
 }
 
 class ClassDefn extends UserDefn {
     baseTypeRef: ClassDefn = null;
+    className = "";		// Base1>Base2>name
+    classId = 0;
+    subclasses: ClassDefn[] = []; // direct proper subclasses
+    vtable = null;
 
     constructor(file:string, line:number, name:string, public baseName:string, props:Prop[], methods:Method[], origin:number) {
 	super(file, line, name, DefnKind.Class, props, methods, origin);
     }
+
+    hasMethod(name:string):boolean {
+	for ( var i=0 ; i < this.methods.length ; i++ )
+	    if (this.methods[i].name == name)
+		return true;
+	return false;
+    }
+}
+
+class VirtualMethodNameIterator {
+    private i = 0;
+    private inherited = false;
+    private filter = {};
+
+    constructor(private cls:ClassDefn) {}
+
+    next(): [string,boolean] {
+	for (;;) {
+	    if (this.i == this.cls.methods.length) {
+		if (!this.cls.baseTypeRef)
+		    return ["", false];
+		this.i = 0;
+		this.cls = this.cls.baseTypeRef;
+		this.inherited = true;
+		continue;
+	    }
+	    var m = this.cls.methods[this.i++];
+	    if (m.kind != MethodKind.Virtual) // In the future, we may have non-virtuals
+		continue;
+	    if (m.name == "init") // Not virtual
+		continue;
+	    if (this.filter.hasOwnProperty(m.name))
+		continue;
+	    this.filter[m.name] = true;
+	    return [m.name, this.inherited];
+	}
+    }
+}
+
+class InclusiveSubclassIterator {
+    private stack = [];
+
+    constructor(cls:ClassDefn) {
+	this.stack.push(cls);
+    }
+
+    next(): ClassDefn {
+	if (this.stack.length == 0)
+	    return null;
+	var x = this.stack.pop();
+	if (typeof x == "number") {
+	    var xs = this.stack.pop();
+	    var cls = xs[x++];
+	    if (x < xs.length) {
+		this.stack.push(xs);
+		this.stack.push(x);
+	    }
+	    if (cls.subclasses.length > 0) {
+		this.stack.push(cls.subclasses);
+		this.stack.push(0);
+	    }
+	    return cls;
+	}
+	else {
+	    if (x.subclasses.length > 0) {
+		this.stack.push(x.subclasses);
+		this.stack.push(0);
+	    }
+	    return x;
+	}
+    }
 }
 
 class StructDefn extends UserDefn {
-    checked: boolean = false;
-    live: boolean = false;
+    hasGetMethod = false;
+    hasSetMethod = false;
 
     constructor(file:string, line:number, name:string, props:Prop[], methods:Method[], origin:number) {
 	super(file, line, name, DefnKind.Struct, props, methods, origin);
+	for ( var i=0 ; i < methods.length ; i++ ) {
+	    var m = methods[i];
+	    if (m.kind == MethodKind.Get)
+		this.hasGetMethod = true;
+	    else if (m.kind == MethodKind.Set)
+		this.hasSetMethod = true;
+	}
     }
 }
 
@@ -64,8 +173,7 @@ enum PropQual {
 class Prop {
     typeRef: Defn = null;
 
-    constructor(public line:number, public name:string, public qual:PropQual, public isArray:boolean, public typeName:string) {
-    }
+    constructor(public line:number, public name:string, public qual:PropQual, public isArray:boolean, public typeName:string) {}
 }
 
 enum MethodKind {
@@ -76,7 +184,24 @@ enum MethodKind {
 }
 
 class Method {
-    constructor(public line:number, public kind:MethodKind, public name:string, public body: string[]) {
+    constructor(public line:number, public kind:MethodKind, public name:string, public body: string[]) {}
+}
+
+class MapEntry {
+    constructor(public name:string, public expand:boolean, public offset:number, public type:Defn) {}
+
+    get memory(): string {
+	if (this.type.kind != DefnKind.Primitive)
+	    throw new Error("No memory type available for non-primitive type " + this.type.name);
+	return "_mem_" + this.type.name;
+    }
+
+    get size(): number {
+	return this.type.size;
+    }
+
+    toString() {
+	return "(" + this.name + " " + this.expand + " " + this.offset + " " + this.type.name + ")";
     }
 }
 
@@ -85,9 +210,9 @@ var allDefs:[UserDefn[],string[]][] = [];
 function main(args: string[]) {
     for ( var i=0 ; i < args.length ; i++ ) {
 	var input_file = args[i];
-	if (input_file.length < 10 ||
-	    (input_file.substring(-10) != ".js.parlib" && input_file.substring(-10) != ".ts.parlib"))
-	    throw new Error("Bad file name: " + input_file);
+	if (input_file.length < 11 ||
+	    (input_file.slice(-11) != ".js.parlang" && input_file.slice(-11) != ".ts.parlang"))
+	    throw new Error("Bad file name (must be .js.parlang or .ts.parlang): " + input_file);
 	var text = fs.readFileSync(input_file, "utf8");
 	var lines = text.split("\n");
 	allDefs.push(collectDefinitions(input_file, lines));
@@ -97,20 +222,21 @@ function main(args: string[]) {
     resolveTypeRefs();
     checkRecursion();
     layoutTypes();
+    createVirtuals();
     expandSelfAccessors();
     pasteupTypes();
     expandGlobalAccessorsAndMacros();
 
     for ( var i=0 ; i < args.length ; i++ ) {
-	var output_file = args[i].replace(/\.parlib$/,"");
+	var output_file = args[i].replace(/\.parlang$/,"");
 	var text = allDefs[i][1].join("\n")
-	fs.writeFileSync(output_file, "utf8");
+	fs.writeFileSync(output_file, text, "utf8");
     }
 }
 
 var Ws = "\\s+";
 var Os = "\\s*";
-var Id = "[A-Za-z_][A-Za-z0-9_]*";
+var Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed
 var Lbrace = Os + "\\{";
 var Rbrace = Os + "\\}";
 var Comment = Os + "(?:\\/\\/.*)?";
@@ -200,92 +326,44 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		properties.push(new Prop(i, m[1], PropQual.None, true, m[2]));
 	    }
 	    else if (in_method) {
+		// TODO: if we're going to be collecting random cruft
+		// then blank and comment lines at the end of a method
+		// really should be placed at the beginning of the
+		// next method.  Also see hack in pasteupTypes() that
+		// removes blank lines from the end of a method body.
 		mbody.push(l);
+	    }
+	    else if (blank_re.test(l)) {
 	    }
 	    else
 		throw new Error(filename + ":" + i + ": Syntax error: Not a property or method: " + l);
 	}
+	if (in_method)
+	    methods.push(new Method(i, method_type, method_name, mbody));
 
 	if (kind == "class")
 	    defs.push(new ClassDefn(filename, lineno, name, inherit, properties, methods, nlines.length));
 	else
 	    defs.push(new StructDefn(filename, lineno, name, properties, methods, nlines.length));
     }
-    return [defs, lines];
+    return [defs, nlines];
 }
+
+var builtinTypes =
+    {int8:    new PrimitiveDefn("int8", 1, true),
+     uint8:   new PrimitiveDefn("uint8", 1, true),
+     int16:   new PrimitiveDefn("int16", 2, true),
+     uint16:  new PrimitiveDefn("uint16", 2, true),
+     int32:   new PrimitiveDefn("int32", 4, true),
+     uint32:  new PrimitiveDefn("uint32", 4, true),
+     float32: new PrimitiveDefn("float32", 4, false),
+     float64: new PrimitiveDefn("float64", 8, false)
+};
 
 var atomicTypes = {int8:true, uint8:true, int16:true, uint16:true, int32:true, uint32:true};
-var builtinTypes = {int8:1, uint8:1, int16:2, uint16:2, int32:4, uint32:4, float32:4, float64:8};
 var knownTypes = {};		// Map from string to UserDefn
+var knownIds = {};
 var allTypes:UserDefn[] = [];
-
-// TODO: This will also match bogus things like XSELF_ because there's no lookbehind,
-// could compensate below.
-
-var self_getter_re = /SELF_(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
-var self_accessor_re = /SELF_(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+/g;
-
-// TODO: really should check validity of the name here, not hard to do.
-// Can fall back on that happening on the next pass probably.
-
-function expandSelfAccessors():void {
-    for ( var i=0 ; i < allTypes.length ; i++ ) {
-	var t = allTypes[i];
-	var meths = t.methods;
-	for ( var j=0 ; j < meths.length ; j++ ) {
-	    var m = meths[j];
-	    var body = m.body;
-	    for ( var k=0 ; k < body.length ; k++ ) {
-		body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "(self";
-		});
-		body[k] = body[k].replace(self_getter_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "(self)";
-		});
-	    }
-	}
-    }
-}
-
-function expandGlobalAccessorsAndMacros():void {
-    var ts = "";
-    var cs = "";
-    for ( var i=0 ; i < allTypes.length ; i++ ) {
-	if (ts != "")
-	    ts += "|";
-	ts += allTypes[i].name;
-	if (allTypes[i].kind == DefnKind.Class) {
-	    if (cs != "")
-		cs += "|";
-	    cs += allTypes[i].name;
-	}
-    }
-
-    // TODO: the accessor regex can mismatch because we ignore the left context.
-    var acc_re = new RegExp("(?:" + cs + ")\\.[a-zA-Z0-9_]+\\s*\\(");
-    var new_re = new RegExp("@new\s+(?:(?:" + cs + ")|(?:array\s*\\(" + ts + "\\)))");
-
-    for ( var i=0 ; i < allDefs.length ; i++ ) {
-	var t = allTypes[i];
-	var meths = t.methods;
-	for ( var j=0 ; j < meths.length ; j++ ) {
-	    var m = meths[j];
-	    var body = m.body;
-	    for ( var k=0 ; k < body.length ; k++ ) {
-		body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "(self";
-		});
-		body[k] = body[k].replace(self_getter_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "(self)";
-		});
-	    }
-	}
-    }
-}
-
-function pasteupTypes():void {
-    // Emit all code for a type where the type was defined.
-}
 
 function buildTypeMap() {
     for ( var i=0 ; i < allDefs.length ; i++ ) {
@@ -314,128 +392,632 @@ function resolveTypeRefs():void {
 		if (!knownTypes.hasOwnProperty(cls.baseName))
 		    throw new Error(cls.file + ":" + cls.line + ": Missing base type: " + cls.baseName);
 		cls.baseTypeRef = knownTypes[cls.baseName];
+		cls.baseTypeRef.subclasses.push(cls);
 	    }
 	}
 	var props = d.props;
 	for ( var j=0 ; j < props.length ; j++ ) {
-	    var p = props[i];
+	    var p = props[j];
 	    if (p.qual != PropQual.None) {
-		// TODO: better line number here
 		if (!atomicTypes.hasOwnProperty(p.typeName))
-		    throw new Error(d.file + ":" + d.line + ": Not an atomic type: " + p.typeName);
+		    throw new Error(d.file + ":" + p.line + ": Not an atomic type: " + p.typeName);
 	    }
 	    if (builtinTypes.hasOwnProperty(p.typeName)) {
-		p.typeRef = builtinTypes[p.typeName]; // Will be a number
+		p.typeRef = builtinTypes[p.typeName];
 		continue;
 	    }
 	    if (!knownTypes.hasOwnProperty(p.typeName))
-		throw new Error(d.file + ":" + d.line + ": Undefined type: " + p.typeName);
+		throw new Error(d.file + ":" + p.line + ": Undefined type: " + p.typeName);
 	    p.typeRef = knownTypes[p.typeName];
 	}
     }
 }
 
-// For each record type, check that it does not reference itself recursively.
-
 function checkRecursion():void {
     for ( var i=0 ; i < allTypes.length ; i++ ) {
 	var d = allTypes[i];
-	if (d.kind != DefnKind.Struct)
-	    continue;
-	checkRecursionFor(<StructDefn> d);
+	if (d.kind == DefnKind.Struct)
+	    checkRecursionForStruct(<StructDefn> d);
+	else if (d.kind == DefnKind.Class)
+	    checkRecursionForClass(<ClassDefn> d);
     }
 
-    function checkRecursionFor(d:StructDefn):void {
+    // For a struct type, check that it does not include itself.
+    function checkRecursionForStruct(d:StructDefn):void {
 	if (d.checked)
 	    return;
 	d.live = true;
 	var props = d.props;
 	for ( var j=0 ; j < props.length ; j++ ) {
-	    var p = props[i];
+	    var p:Prop = props[i];
 	    if (p.isArray)
+		continue;
+	    if (builtinTypes.hasOwnProperty(p.typeName))
 		continue;
 	    var probe:UserDefn = knownTypes[p.typeName];
 	    if (probe.kind != DefnKind.Struct)
 		continue;
 	    var s = <StructDefn> probe;
 	    if (s.live)
-		throw new Error("Recursive type reference");
-	    checkRecursionFor(s.typeRef);
+		throw new Error("Recursive type reference to struct " + p.typeName + " from " + d.name); // TODO: file/line
+	    p.typeRef = s;
+	    checkRecursionForStruct(s);
+	}
+	d.live = false;
+	d.checked = true;
+    }
+
+    // For a class type, check that it does not inherit from itself.
+    function checkRecursionForClass(d:ClassDefn):void {
+	if (d.checked)
+	    return;
+	d.live = true;
+	if (d.baseTypeRef) {
+	    if (d.baseTypeRef.live)
+		throw new Error("Recursive type reference to base class from " + d.name); // TODO: file/line
+	    checkRecursionForClass(d.baseTypeRef);
 	}
 	d.live = false;
 	d.checked = true;
     }
 }
 
-// Layout:
-//  - For each class and record type, create a type map from name to offset, and compute
-//    size and alignment
-//  - For each record type, ensure that it is not circularly included
-//  - For each method, ...
-//  - NOTE, must also check uniqueness of all field names along a path, for classes
-
 function layoutTypes():void {
     for ( var i=0 ; i < allTypes.length ; i++ ) {
-	var d = allTypes[i];
-	var map = [];
+	var d:UserDefn = allTypes[i];
 	if (d.kind == DefnKind.Class)
 	    layoutClass(<ClassDefn> d);
 	else
 	    layoutStruct(<StructDefn> d);
+	/*
+	console.log(d.name + " " + d.size + " " + d.align);
+	var s = "";
+	for ( var n in d.map )
+	    s += d.map[n].toString() + "\n";
+	console.log(s);
+	*/
     }
 }
-
-// What's in a layout map?  And what else do we need?
-//
-//   It has the 
 
 function layoutClass(d:ClassDefn):void {
-    var map = [];
+    var map = {};
     var size = 4;
-    /*
+    var align = 4;
     if (d.baseName != "") {
-	if (d.typeRef.map === undefined)
-	    layoutClass(d.typeRef);
-	map = d.typeRef.map.slice(0);
-	size = d.typeRef.size;
+	if (d.baseTypeRef.map == null)
+	    layoutClass(d.baseTypeRef);
+	map = shallowCopy(d.baseTypeRef.map);
+	size = d.baseTypeRef.size;
+	align = d.baseTypeRef.align;
     }
-    for ( each prop ) {
-	if (prop is struct) {
-	    if (struct not laid out)
-		layoutStruct(...);
-	    insert fields here;
-	}
-    }*/
-    
+    layoutDefn(d, map, size, align);
+    // layoutDefn updates d.map, d.size, d.align
+    d.className = (d.baseTypeRef ? (d.baseTypeRef.className + ">") : "") + d.name;
+    d.classId = computeClassId(d.className);
+    if (knownIds[d.classId])
+	throw new Error("Duplicate class ID for " + d.className + ": previous=" + knownIds[d.classId] + ", id=" + d.classId);
+    knownIds[d.classId] = d.className;
 }
 
-function layoutStruct(d:StructDefn):void {
-/*
-    var map = [];
-    var size = 0;
-    var align = 0;
-    if (d.live)
-	throw new Error("Recursive");
-    d.live = true;
-    for (props) {
-	if (field type is int or float) {
-	    { round up alloc to fields size; set align=max(align,field size)  }
-	    size += field size;
+function layoutStruct(d:UserDefn):void {
+    layoutDefn(d, {}, 0, 0);
+}
+
+function layoutDefn(d:UserDefn, map, size:number, align:number):void {
+    var props = d.props;
+    for ( var i=0 ; i < props.length ; i++ ) {
+	var p = props[i];
+	var k = p.typeRef.kind;
+	if (p.isArray)
+	    k = DefnKind.Class;
+	switch (k) {
+	case DefnKind.Primitive: {
+	    var pt = <PrimitiveDefn> p.typeRef;
+	    size = (size + pt.size - 1)&~(pt.size - 1);
+	    align = Math.max(align, pt.align);
+	    map[p.name] = new MapEntry(p.name, true, size, pt);
+	    size += pt.size;
+	    break;
 	}
-	else if (field type is class) {
-	    { round up alloc to 4; set align=max(align,4)  }
+	case DefnKind.Class: {
+	    // Could also be array, don't look at the contents
+	    size = (size + 3) & ~3;
+	    align = Math.max(align, 4);
+	    map[p.name] = new MapEntry(p.name, true, size, builtinTypes.int32);
 	    size += 4;
+	    break;
 	}
-	else if (field type is struct) {
-	    // layout struct if not laid out
-	    round up alloc to struct align
-	    set align=max(align, struct align)
-	    size += struct size
-            append struct fields into our fields
-        }
+	case DefnKind.Struct: {
+	    var st = <StructDefn> p.typeRef;
+	    if (st.map == null)
+		layoutStruct(st);
+	    size = (size + st.align - 1) & ~(st.align - 1);
+	    align = Math.max(align, st.align);
+	    map[p.name] = new MapEntry(p.name, false, size, st);
+	    var root = p.name;
+	    for ( var n in st.map ) {
+		if (st.map.hasOwnProperty(n)) {
+		    var fld = st.map[n];
+		    var fldname = root + "_" + fld.name;
+		    map[fldname] = new MapEntry(fldname, fld.expand, size + fld.offset, fld.type);
+		}
+	    }
+	    size += st.size;
+	    break;
+	}
+	}
     }
-    d.live = false;
+    d.map = map;
+    d.size = size;
+    d.align = align;
+}
+
+function shallowCopy(obj) {
+    var result = {};
+    for ( var n in obj )
+	if (obj.hasOwnProperty(n))
+	    result[n] = obj[n];
+    return result;
+}
+
+// Compute a 28-bit nonnegative hash value for the name.  This needs
+// to be *globally* unique (ie across workers).  There's really no
+// easy way to guarantee that, but we check uniqueness within each
+// program and so long as a type used in both programs is unique
+// within both programs we're mostly fine.  The risk is that type A in
+// program P1 is misidentified as type B in program P2 because A and B
+// have the same class ID and P1 does not include B and P2 does not
+// include A.  But that's technically a bug in the programs.
+
+function computeClassId(name:string):number {
+    var n = name.length;
+    for (var i=0 ; i < name.length ; i++ ) {
+	var c = name.charAt(i);
+	var v = 0;
+	if (c >= 'A' && c <= 'Z')
+	    v = c.charCodeAt(0) - 'A'.charCodeAt(0);
+	else if (c >= 'a' && c <= 'z')
+	    v = c.charCodeAt(0) - 'a'.charCodeAt(0) + 26;
+	else if (c >= '0' && c <= '9')
+	    v = c.charCodeAt(0) - '0'.charCodeAt(0) + 52;
+	else if (c == '_')
+	    v = 62;
+	else if (c == '>')
+	    v = 63;
+	else
+	    throw new Error("Internal error: Bad character in class name: " + c);
+	n = (((n & 0x1FFFFFF) << 3) | (n >>> 25)) ^ v;
+    }
+    return n;
+}
+
+// For each class, create a representation of its vtable
+
+function createVirtuals():void {
+    for ( var i=0 ; i < allTypes.length ; i++ )
+	if (allTypes[i].kind == DefnKind.Class)
+	    createVirtualsFor(<ClassDefn> allTypes[i]);
+}
+
+/*
+    for ( a given virtual name in me or my parent )
+        for ( my subclass ids including me )
+   	    create a case that tests that id:
+                dispatch to the first impl in the chain starting at that subclass, if any, stopping at me
+        create a default
+            if the virtual is inherited by me then dispatch to the first impl in the chain starting at my parent
+            otherwise throw
 */
+
+function createVirtualsFor(cls: ClassDefn): void {
+    var vtable = [];
+    var mnames = new VirtualMethodNameIterator(cls);
+    for ( var [mname, isInherited] = mnames.next() ; mname != "" ; [mname, isInherited] = mnames.next() ) {
+	var reverseCases = {};
+	var subs = new InclusiveSubclassIterator(cls);
+	for ( var subcls = subs.next() ; subcls ; subcls = subs.next() ) {
+	    var impl = findMethodImplFor(subcls, cls.baseTypeRef, mname);
+	    if (!impl)
+		continue;
+	    if (!reverseCases.hasOwnProperty(impl))
+		reverseCases[impl] = [];
+	    reverseCases[impl].push(subcls.classId);
+	}
+	var def = null;
+	if (isInherited && cls.baseTypeRef)
+	    def = findMethodImplFor(cls.baseTypeRef, null, mname);
+	vtable.push({ name: mname, reverseCases: reverseCases, default_: def });
+    }
+    cls.vtable = vtable;
+}
+
+function findMethodImplFor(cls, stopAt, name) {
+    if (cls == stopAt)
+	return null;
+    if (cls.hasMethod(name))
+	return cls.name + "." + name + "_impl";
+    if (cls.baseTypeRef)
+	return findMethodImplFor(cls.baseTypeRef, stopAt, name);
+    throw new Error("Internal error: Method not found: " + name);
+}
+
+
+// TODO: This will also match bogus things like XSELF_ because there's
+// no lookbehind.
+
+var self_getter_re = /SELF_(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
+var self_accessor_re = /SELF_(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
+
+// TODO: really should check validity of the name here, not hard to do.
+// Can fall back on that happening on the next pass probably.
+
+function expandSelfAccessors():void {
+    for ( var i=0 ; i < allTypes.length ; i++ ) {
+	var t = allTypes[i];
+	var meths = t.methods;
+	for ( var j=0 ; j < meths.length ; j++ ) {
+	    var m = meths[j];
+	    var body = m.body;
+	    for ( var k=0 ; k < body.length ; k++ ) {
+		body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
+		    return t.name + "." + m.substring(5) + "self, ";
+		});
+		body[k] = body[k].replace(self_getter_re, function (m, p, s) {
+		    return t.name + "." + m.substring(5) + "(self)";
+		});
+	    }
+	}
+    }
+}
+
+function pasteupTypes():void {
+    for ( var i=0 ; i < allDefs.length ; i++ ) {
+	var defs = allDefs[i][0];
+	var lines = allDefs[i][1];
+	var nlines = [];
+	var k = 0;
+	for ( var j=0 ; j < defs.length ; j++ ) {
+	    var d:UserDefn = defs[j];
+	    while (k < d.origin && k < lines.length)
+		nlines.push(lines[k++]);
+	    nlines.push("const " + d.name + " = {");
+	    nlines.push("  SIZE = " + d.size + ",");
+	    nlines.push("  ALIGN = " + d.align + ",");
+	    if (d.kind == DefnKind.Class) {
+		var cls = <ClassDefn> d;
+		nlines.push("  CLSID = " + cls.classId + ",");
+	    }
+
+	    // Now do methods.
+	    //
+	    // Implementation methods are emitted directly in the defining type, with a name suffix _impl.
+	    // For struct methods, the name is "_get_impl", "_set_impl", or "_copy_impl".
+
+	    var meths = d.methods;
+	    for ( var l=0 ; l < meths.length ; l++ ) {
+		var m = meths[l];
+		var name = m.name;
+		if (name == "") {
+		    switch (m.kind) {
+		    case MethodKind.Get: name = "_get_impl"; break;
+		    case MethodKind.Set: name = "_set_impl"; break;
+		    case MethodKind.Copy: name = "_copy_impl"; break;
+		    }
+		}
+		else if (name == "init")
+		    ;
+		else
+		    name += "_impl";
+		var body = m.body;
+		// Formatting: useful to strip all trailing blank lines from
+		// the body first.
+		var last = body.length-1;
+		while (last > 0 && /^\s*$/.test(body[last]))
+		    last--;
+		if (last == 0)
+		    nlines.push("  " + name + " : function " + body[0] + ",");
+		else {
+		    nlines.push("  " + name + " : function " + body[0]);
+		    for ( var x=1; x < last ; x++ )
+			nlines.push(body[x]);
+		    nlines.push(body[last] + ",");
+		}
+	    }
+
+	    // Now do vtable, if appropriate.
+
+	    // TODO: instead of using ...args we really must use a
+	    // signature from one of the method defs, but it's tricky
+	    // since we may have to strip annotations, and there's
+	    // also a question about rest arguments.  (Not to mention
+	    // the arguments object.)
+
+	    // TODO: better error message?
+
+	    if (d.kind == DefnKind.Class) {
+		var cls = <ClassDefn> d;
+		var vtable = cls.vtable;
+		for ( var l=0 ; l < vtable.length ; l++ ) {
+		    var virtual = vtable[l];
+		    nlines.push(virtual.name + ": function (self, ...args) {");
+		    nlines.push("  switch (_mem_i32[self>>2]) {");
+		    var rev = virtual.reverseCases;
+		    for ( var revname in rev ) {
+			if (rev.hasOwnProperty(revname)) {
+			    var revs = rev[revname];
+			    for ( var r=0 ; r < revs.length ; r++ )
+				nlines.push("    case " + revs[r] + ": ");
+			    nlines.push("      return " + revname + "(self, ...args);");
+			}
+		    }
+		    nlines.push("    default:");
+		    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(self, ...args)") : "throw new Error('Bad type')") + ";");
+		    nlines.push("  }");
+		    nlines.push("},");
+		}
+	    }
+
+	    // Now do other methods: initInstance.
+
+	    if (d.kind == DefnKind.Class) {
+		var cls = <ClassDefn> d;
+		nlines.push("initInstance:function(self) { _mem_i32[self>>2]=" + cls.classId + "; },");
+	    }
+
+	    nlines.push("}");
+	}
+	allDefs[i][1] = nlines;
+    }
+}
+
+var acc_re = null;
+var arr_re = null;
+var new_re = null;
+
+function setupRegexes() {
+    var ts = "int8|uint8|int16|uint16|int32|uint32|float32|float64";
+    var cs = "";
+    var us = "";
+    for ( var i=0 ; i < allTypes.length ; i++ ) {
+	ts += "|";
+	ts += allTypes[i].name;
+	if (allTypes[i].kind == DefnKind.Class) {
+	    if (cs != "")
+		cs += "|";
+	    cs += allTypes[i].name;
+	}
+	if (allTypes[i].kind == DefnKind.Struct) {
+	    if (us != "")
+		us += "|";
+	    us += allTypes[i].name;
+	}
+    }
+    var xs = "";
+    if (cs && us)
+	xs = cs + "|" + us;
+    else if (cs)
+	xs = cs;
+    else
+	xs = us;
+
+    // TODO: Do we properly handle nested matches?
+
+    acc_re = new RegExp("(" + xs + ")\\.(set_|ref_)?([a-zA-Z0-9_]+)\\s*\\(", "g");
+    arr_re = new RegExp("(" + ts + ")\\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\\s*\\(", "g");
+    new_re = new RegExp("@new\\s+(?:(" + cs + ")|array\\s*\\(\\s*(" + ts + ")\\s*,)", "g");
+}
+
+function expandGlobalAccessorsAndMacros():void {
+    setupRegexes();
+
+    for ( var i=0 ; i < allDefs.length ; i++ ) {
+	var lines = allDefs[i][1];
+	var nlines = [];
+	for ( var j=0 ; j < lines.length ; j++ ) {
+	    nlines.push(expandMacrosIn(lines[j]))
+	allDefs[i][1] = nlines;
+    }
+}
+
+// FIXME: This can't use replace(), because replace() does not account for additional argument gobbling.
+
+function expandMacrosIn(text) {
+    // FIXME: if used recursively, mind the use of lastIndex etc
+    return text.replace(acc_re, accMacro).replace(arr_re, arrMacro).replace(new_re, newMacro));
+}
+
+class ParamParser {
+    private lim = 0;
+    private done = false;
+
+    constructor(private input:string, private pos:number) {
+	this.lim = input.length;
+    }
+
+    // Returns null on failure to find a next argument
+    private nextArg():string {
+	if (this.done)
+	    return null;
+	var depth = 0;
+	var start = this.pos;
+	// TODO: Really should outlaw regular expressions, but much harder, and somewhat marginal
+	// TODO: Really should handle /* .. */ comments
+	while (this.pos < this.lim) {
+	    switch (this.input.charAt(this.pos++)) {
+	    case ',':
+		if (depth == 0)
+		    return cleanupArg(this.input.substring(start, this.pos-1));
+		break;
+	    case '(':
+		depth++;
+		break;
+	    case ')':
+		if (depth == 0) {
+		    this.done = true;
+		    return cleanupArg(this.input.substring(start, this.pos-1));
+		}
+		--depth;
+		break;
+	    case '\'':
+	    case '"':
+		// FIXME: implement this
+		throw new Error("Internal error: Avoid strings in arguments for now");
+	    }
+	}
+    }
+
+    allArgs():string[] {
+	var as:string[] = [];
+	var a;
+	while (a = this.nextArg())
+	    as.push(a);
+	return as;
+    }
+
+    get where(): number {
+	return this.pos;
+    }
+}
+
+function cleanupArg(s:string):string {
+    s = s.replace(/^\s*|\s*$/g, "");
+    if (s == "")
+	return null;
+    return s;
+}
+
+// FOO!  How to /get rid of/ the arguments that are parsed?  They are outside the
+// matched string.  Need to step away from using replace().  Probably just as well.
+
+function accMacro(m, className, operation, propName, p, s) {
+    // FIXME: atomics, synchronics and all operations on them
+    // Atomics should be expanded inline.
+    // Synchronics should indirect through methods on Parlang, probably.
+    if (!operation)
+	operation = "get_";
+    var cls = knownTypes[className];
+    if (!cls)
+	return m;
+    var fld = cls.findAccessibleFieldFor(operation, propName);
+    if (!fld) {
+	console.log("No field for " + propName);
+	return m;
+    }
+
+    // TODO: Emit warnings for arity abuse, at a minimum.
+
+    var as = (new ParamParser(s, p+m.length)).allArgs();
+    switch (operation) {
+    case "get_": if (as.length != 1) { console.log("Bad get arity " + propName + " " + as.length); return m; }; break;
+    case "set_": if (as.length != 2) { console.log("Bad set arity " + propName + " " + as.length); return m; }; break;
+    }
+
+    var ref = "(" + cleanup(as[0]) + "+" + fld.offset + ")";
+    if (operation == "ref_")
+	return ref;
+    var mem="", size=0;
+    if (fld.type.kind == DefnKind.Primitive) {
+	mem = fld.memory;
+	size = fld.size;
+    }
+    else if (fld.type.kind == DefnKind.Class) {
+	mem = "_mem_int32";
+	size = 4;
+    }
+    if (size > 0) {
+	switch (operation) {
+	case "get_":
+	    return "(" + mem + "[" + ref + ">>" + log2(size) + "])";
+	case "set_":
+	    return "(" + mem + "[" + ref + ">>" + log2(size) + "] = " + cleanup(as[1]) + ")";
+	default:
+	    console.log("Bad operation");
+	    return m;		// Warning desired
+	}
+    }
+    else {
+	var t = <StructDefn> fld.type;
+
+	// Field type is a structure.  If the structure type has a getter then getting is allowed
+	// and should be rewritten as a call to the getter, passing the field reference.
+	// Ditto setter, which will also pass secondArg.
+	switch (operation) {
+	case "get_":
+	    if (!t.hasGetMethod)
+		return m;	// Warning desired
+	    return "(" + t.name + "._get_impl(" + ref + "))";
+	case "set_":
+	    if (!t.hasSetMethod)
+		return m;	// Warning desired
+	    return "(" + t.name + "._set_impl(" + ref + "," + cleanup(as[1]) + "))";
+	default:
+	    return m;		// Warning desired
+	}
+    }
+}
+
+// operation is get or set
+// typename is the base type, which could be any type at all
+// field may be blank, but if it is not then it is the field name within the
+//   type, eg, for a struct Foo with field x we may see Foo.array_get_x(self, n)
+// firstArg and secondArg are non-optional; thirdArg is used if the operation is set
+
+function arrMacro(m, typeName, operation, field, p, s) {
+    var as = (new ParamParser(s, p+m.length)).allArgs();
+    console.log(typeName + " " + operation + " " + field + " [" + as.join(" , ") + "]  " + s.substring(p+m.length) );
+
+    // FIXME: array accessors on structures
+    // FIXME: array accessors on primitive types and pointers
+    // FIXME: need a third arg, too, for setter
+
+    return m;
+}
+
+// Since @new is new syntax, we throw errors for all misuse.
+
+function newMacro(m, x, z, p, s) {
+    if (x !== undefined) {
+	var t = knownTypes[x];
+	if (!t)
+	    throw new Error("Unknown type argument to @new: " + x);
+	return "(" + x + ".initInstance(Parlang.alloc(" + t.size + "," + t.align + ")))";
+    }
+
+    var as = (new ParamParser(s, p+m.length)).allArgs();
+    if (as.length != 1)
+	throw new Error("Wrong number of arguments to @new array(" + z + ")")
+
+    var t = findType(z);
+    return "(Parlang.alloc(" + z.size + " * " + cleanup(as[0]) + ", " + z.align + "))";
+}
+
+function findType(name:string) {
+    if (builtinTypes.hasOwnProperty(name))
+	return builtinTypes[name];
+    if (knownTypes.hasOwnProperty(name))
+	return knownTypes[name];
+    throw new Error("Internal: Unknown type in sizeofType: " + name);
+}
+
+// This can also check if x is already properly parenthesized, though that
+// involves counting parens, at least trivially (and then does it matter?).
+// Consider (a).(b), which should be parenthesized as ((a).(b)).
+
+function cleanup(x:string):string {
+    if (/^[a-zA-Z0-9]+$/.test(x))
+	return x;
+    return "(" + x + ")";
+}
+
+function log2(x:number):number {
+    if (i <= 0)
+	throw new Error("log2: " + x);
+    var i = 0;
+    while (x > 1) {
+	i++;
+	x >>= 1;
+    }
+    return i;
 }
 
 main(process.argv.slice(2));

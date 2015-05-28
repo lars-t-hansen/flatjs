@@ -37,12 +37,12 @@ function mulrefi(a, c) { return DL3(Vec3.x(a)*c, Vec3.y(a)*c, Vec3.z(a)*c); }
     ambient:   Vec3
     mirror:    float64
 
-    @set(self, diffuse, specular, shininess, ambient, mirror) {
-	SELF_set_diffuse(diffuse);
-	SELF_set_specular(specular);
-	SELF_set_shininess(shininess);
-	SELF_set_ambient(ambient);
-	SELF_set_mirror(mirror);
+    @set(self, m) {
+	SELF_set_diffuse(m.diffuse);
+	SELF_set_specular(m.specular);
+	SELF_set_shininess(m.shininess);
+	SELF_set_ambient(m.ambient);
+	SELF_set_mirror(m.mirror);
     }
 } @end
 
@@ -136,6 +136,9 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 } @end
 
 @shared class Triangle extends Surface {
+    v1: Vec3
+    v2: Vec3
+    v3: Vec3
 
     @method init(self, material, v1, v2, v3) {
 	Surface.init_impl(self, material)
@@ -192,18 +195,18 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	var data = @new array(int32, height*width)
 	var c = (255<<24)|((255*color.z)<<16)|((255*color.y)<<8)|(255*color.x)
 	for ( var i=0, l=width*height ; i < l ; i++ )
-	    array_int32_set(data, i, c);
+	    int32.array_set(data, i, c);
 	SELF_set_data(data)
 	return self
     }
 
     // For debugging only
     @method ref(self, y, x) {
-	return Parlang.int32.array_get(SELF_data, (SELF_height-y)*SELF_width+x);
+	return int32.array_get(SELF_data, (SELF_height-y)*SELF_width+x);
     }
 
     // Not a hot function
     @method setColor(self, y, x, v) {
-	Parlang.int32.array_set(SELF_data, (SELF_height-y)*SELF_width+x] = (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x);
+	int32.array_set(SELF_data, (SELF_height-y)*SELF_width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
     }
 } @end
