@@ -2,10 +2,34 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* libparlang.js - load this before loading your compiled Parlang program.
+/* libparlang.js - load this before loading your compiled FlatJS program.
  *
- * Call Parlang.init before using, see documentation below.
+ * Call FlatJS.init before using, see documentation below.
  */
+
+if (typeof "SharedArrayBuffer" == "undefined") {
+    SharedArrayBuffer = ArrayBuffer;
+    SharedInt8Array = Int8Array;
+    SharedUint8Array = Uint8Array;
+    SharedInt16Array = Int16Array;
+    SharedUint16Array = Uint16Array;
+    SharedInt32Array = Int32Array;
+    SharedUint32Array = Uint32Array;
+    SharedFloat32Array = Float32Array;
+    SharedFloat64Array = Float64Array;
+}
+
+if (typeof "Atomics" == "undefined") {
+    Atomics = { load: function (a,n) { return a[n]; },
+		store: function (a,n,v) { a[n]=v; return v; },
+		add: function (a,n,v) { var old=a[n]; a[n]=old+v; return old; },
+		sub: function (a,n,v) { var old=a[n]; a[n]=old-v; return old; },
+		and: function (a,n,v) { var old=a[n]; a[n]=old&v; return old; },
+		or: function (a,n,v) { var old=a[n]; a[n]=old|v; return old; },
+		xor: function (a,n,v) { var old=a[n]; a[n]=old^v; return old; },
+		compareExchange: function (a,n,x,v) { var old=a[n]; if (old==x) a[n] = v; return old; }
+	      };
+}
 
 var _mem_int8 = null;
 var _mem_uint8 = null;
@@ -16,19 +40,10 @@ var _mem_uint32 = null;
 var _mem_float32 = null;
 var _mem_float64 = null;
 
-//  shared struct Memory {
-//      res0:  int32         // reserved, initialized to zero
-//      alloc: atomic int32  // allocation byte pointer
-//      limit: int32         // allocation byte limit
-//      res1:  int32         // reserved
-//      // user memory from here
-//      // ...
-//  }
-
-const Parlang =
+const FlatJS =
 {
     /*
-     * Initialize the local Parlang instance.
+     * Initialize the local FlatJS instance.
      *
      * Buffer can be an ArrayBuffer or SharedArrayBuffer.  In the
      * latter case, all workers must pass the same buffer during
@@ -36,17 +51,17 @@ const Parlang =
      *
      * "initialize" must be true in exactly one agent and that call
      * must return before any agent can call any other methods on
-     * their local Parlang objects.  Normally, you would allocate your
-     * memory in the main thread, call Parlang.init(buffer, true) in
+     * their local FlatJS objects.  Normally, you would allocate your
+     * memory in the main thread, call FlatJS.init(buffer, true) in
      * the main thread, and then distribute the buffer to workers.
      */
     init: function (buffer, initialize) {
-	if (buffer instanceof SharedArrayBuffer)
-	    _Parlang_init_sab(this, buffer, initialize);
-	else if (buffer instanceof ArrayBuffer)
-	    _Parlang_init_ab(this, buffer, initialize);
+	if (buffer instanceof ArrayBuffer)
+	    _FlatJS_init_ab(this, buffer, initialize);
+	else if (buffer instanceof SharedArrayBuffer)
+	    _FlatJS_init_sab(this, buffer, initialize);
 	else
-	    throw new Error("Parlang can be built only on SharedArrayBuffer or ArrayBuffer");
+	    throw new Error("FlatJS can be initialized only on SharedArrayBuffer or ArrayBuffer");
     },
 
     /*
@@ -101,15 +116,18 @@ const Parlang =
 	return null;
     },
 
+    // TODO: Synchronic methods.  If we are using nonshared memory they
+    // should probably throw.
+
     // Private.
     _idToType: {}
 };
 
-function _Parlang_init_sab(parlang, sab, initialize) {
+function _FlatJS_init_sab(parlang, sab, initialize) {
     var len = sab.byteLength & ~7;
     if (len < 16)
 	throw new Error("The memory is too small even for metadata");
-    parlang.alloc = _Parlang_alloc_sab;
+    parlang.alloc = _FlatJS_alloc_sab;
     _mem_int8 = new SharedInt8Array(sab, 0, len);
     _mem_uint8 = new SharedUint8Array(sab, 0, len);
     _mem_int16 = new SharedInt16Array(sab, 0, len/2);
@@ -124,11 +142,11 @@ function _Parlang_init_sab(parlang, sab, initialize) {
     }
 }
 
-function _Parlang_init_ab(parlang, ab, initialize) {
+function _FlatJS_init_ab(parlang, ab, initialize) {
     var len = ab.byteLength & ~7;
     if (len < 16)
 	throw new Error("The memory is too small even for metadata");
-    parlang.alloc = _Parlang_alloc_ab;
+    parlang.alloc = _FlatJS_alloc_ab;
     _mem_int8 = new Int8Array(ab, 0, len);
     _mem_uint8 = new Uint8Array(ab, 0, len);
     _mem_int16 = new Int16Array(ab, 0, len/2);
@@ -149,7 +167,7 @@ function _Parlang_init_ab(parlang, ab, initialize) {
 // address.  (Later, with a header or similar info, it will be
 // different.)
 
-function _Parlang_alloc_sab(nbytes, alignment) {
+function _FlatJS_alloc_sab(nbytes, alignment) {
     do {
 	var p = Atomics.load(_mem_int32, 1);
 	p = (p + (alignment-1)) & ~(alignment - 1);
@@ -160,7 +178,7 @@ function _Parlang_alloc_sab(nbytes, alignment) {
     return p;
 }
 
-function _Parlang_alloc_ab(nbytes, alignment) {
+function _FlatJS_alloc_ab(nbytes, alignment) {
     var p = _mem_int32[1];
     p = (p + (alignment-1)) & ~(alignment - 1);
     var top = p + nbytes;

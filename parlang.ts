@@ -3,7 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// This is source code for TypeScript 1.5 and node.js 0.10
+// This is source code for TypeScript 1.5 and node.js 0.10.
+// Tested with tsc 1.5.0-beta and nodejs 0.10.25.
 
 /*
  * Usage:
@@ -84,7 +85,7 @@ class ClassDefn extends UserDefn {
     }
 
     hasMethod(name:string):boolean {
-	for ( var m of this.methods )
+	for ( let m of this.methods )
 	    if (m.name == name)
 		return true;
 	return false;
@@ -108,7 +109,7 @@ class VirtualMethodNameIterator {
 		this.inherited = true;
 		continue;
 	    }
-	    var m = this.cls.methods[this.i++];
+	    let m = this.cls.methods[this.i++];
 	    if (m.kind != MethodKind.Virtual) // In the future, we may have non-virtuals
 		continue;
 	    if (m.name == "init") // Not virtual
@@ -131,10 +132,10 @@ class InclusiveSubclassIterator {
     next(): ClassDefn {
 	if (this.stack.length == 0)
 	    return null;
-	var x = this.stack.pop();
+	let x = this.stack.pop();
 	if (typeof x == "number") {
-	    var xs = this.stack.pop();
-	    var cls = xs[x++];
+	    let xs = this.stack.pop();
+	    let cls = xs[x++];
 	    if (x < xs.length) {
 		this.stack.push(xs);
 		this.stack.push(x);
@@ -161,7 +162,7 @@ class StructDefn extends UserDefn {
 
     constructor(file:string, line:number, name:string, props:Prop[], methods:Method[], origin:number) {
 	super(file, line, name, DefnKind.Struct, props, methods, origin);
-	for ( var m of methods ) {
+	for ( let m of methods ) {
 	    if (m.kind == MethodKind.Get)
 		this.hasGetMethod = true;
 	    else if (m.kind == MethodKind.Set)
@@ -216,12 +217,12 @@ class MapEntry {
 var allDefs:[UserDefn[],string[]][] = [];
 
 function main(args: string[]) {
-    for ( var input_file of args ) {
+    for ( let input_file of args ) {
 	if (input_file.length < 11 ||
 	    (input_file.slice(-11) != ".js.parlang" && input_file.slice(-11) != ".ts.parlang"))
 	    throw new Error("Bad file name (must be .js.parlang or .ts.parlang): " + input_file);
-	var text = fs.readFileSync(input_file, "utf8");
-	var lines = text.split("\n");
+	let text = fs.readFileSync(input_file, "utf8");
+	let lines = text.split("\n");
 	allDefs.push(collectDefinitions(input_file, lines));
     }
 
@@ -234,30 +235,30 @@ function main(args: string[]) {
     pasteupTypes();
     expandGlobalAccessorsAndMacros();
 
-    for ( var i=0 ; i < args.length ; i++ ) {
-	var output_file = args[i].replace(/\.parlang$/,"");
-	var text = allDefs[i][1].join("\n")
+    for ( let i=0 ; i < args.length ; i++ ) {
+	let output_file = args[i].replace(/\.parlang$/,"");
+	let text = allDefs[i][1].join("\n")
 	fs.writeFileSync(output_file, text, "utf8");
     }
 }
 
-var Ws = "\\s+";
-var Os = "\\s*";
-var Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed
-var Lbrace = Os + "\\{";
-var Rbrace = Os + "\\}";
-var Comment = Os + "(?:\\/\\/.*)?";
+const Ws = "\\s+";
+const Os = "\\s*";
+const Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed
+const Lbrace = Os + "\\{";
+const Rbrace = Os + "\\}";
+const Comment = Os + "(?:\\/\\/.*)?";
 
-var start_re = new RegExp("^" + Os + "@shared" + Ws + "(?:struct|class)" + Ws + "(?:" + Id + ")");
-var end_re = new RegExp("^" + Rbrace + Os + "@end" + Comment + "$");
-var struct_re = new RegExp("^" + Os + "@shared" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + Comment + "$");
-var class_re = new RegExp("^" + Os + "@shared" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + Comment + "$");
-var special_re = new RegExp("^" + Os + "@(get|set|copy)" + Os + "(\\(" + Os + "self.*)$");
-var method_re = new RegExp("^" + Os + "@method" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "self.*)$");
-var blank_re = new RegExp("^" + Os + Comment + "$");
-var space_re = new RegExp("^" + Os + "$");
-var prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(?:(atomic|synchronic)" + Ws + ")?(" + Id + ")" + Os + ";?" + Comment + "$");
-var aprop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "array" + Os + "\\(" + Os + "(" + Id + ")" + Os + "\\)" + Os + ";?" + Comment + "$");
+const start_re = new RegExp("^" + Os + "@flatjs" + Ws + "(?:struct|class)" + Ws + "(?:" + Id + ")");
+const end_re = new RegExp("^" + Rbrace + Os + "@end" + Comment + "$");
+const struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + Comment + "$");
+const class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + Comment + "$");
+const special_re = new RegExp("^" + Os + "@(get|set|copy)" + Os + "(\\(" + Os + "SELF.*)$");
+const method_re = new RegExp("^" + Os + "@method" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "SELF.*)$");
+const blank_re = new RegExp("^" + Os + Comment + "$");
+const space_re = new RegExp("^" + Os + "$");
+const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(?:(atomic|synchronic)" + Ws + ")?(" + Id + ")" + Os + ";?" + Comment + "$");
+const aprop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "array" + Os + "\\(" + Os + "(" + Id + ")" + Os + "\\)" + Os + ";?" + Comment + "$");
 
 function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string[]] {
     var defs:UserDefn[] = [];
@@ -356,7 +357,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
     return [defs, nlines];
 }
 
-var builtinTypes =
+const builtinTypes =
     {int8:    new PrimitiveDefn("int8", 1, true),
      uint8:   new PrimitiveDefn("uint8", 1, true),
      int16:   new PrimitiveDefn("int16", 2, true),
@@ -367,10 +368,10 @@ var builtinTypes =
      float64: new PrimitiveDefn("float64", 8, false)
 };
 
-var atomicTypes = {int8:true, uint8:true, int16:true, uint16:true, int32:true, uint32:true};
-var knownTypes = {};		// Map from string to UserDefn
-var knownIds = {};
-var allTypes:UserDefn[] = [];
+const atomicTypes = {int8:true, uint8:true, int16:true, uint16:true, int32:true, uint32:true};
+const knownTypes = {};		// Map from string to UserDefn
+const knownIds = {};
+const allTypes:UserDefn[] = [];
 
 function buildTypeMap() {
     for ( var i=0 ; i < allDefs.length ; i++ ) {
@@ -464,7 +465,7 @@ function checkRecursion():void {
 }
 
 function layoutTypes():void {
-    for ( var d of allTypes ) {
+    for ( let d of allTypes ) {
 	if (d.kind == DefnKind.Class)
 	    layoutClass(<ClassDefn> d);
 	else
@@ -503,8 +504,8 @@ function layoutDefn(d:UserDefn, map, size:number, align:number):void {
 	    k = DefnKind.Class;
 	switch (k) {
 	case DefnKind.Primitive: {
-	    var pt = <PrimitiveDefn> p.typeRef;
-	    size = (size + pt.size - 1)&~(pt.size - 1);
+	    let pt = <PrimitiveDefn> p.typeRef;
+	    size = (size + pt.size - 1) & ~(pt.size - 1);
 	    align = Math.max(align, pt.align);
 	    map[p.name] = new MapEntry(p.name, true, size, pt);
 	    size += pt.size;
@@ -519,17 +520,17 @@ function layoutDefn(d:UserDefn, map, size:number, align:number):void {
 	    break;
 	}
 	case DefnKind.Struct: {
-	    var st = <StructDefn> p.typeRef;
+	    let st = <StructDefn> p.typeRef;
 	    if (st.map == null)
 		layoutStruct(st);
 	    size = (size + st.align - 1) & ~(st.align - 1);
 	    align = Math.max(align, st.align);
 	    map[p.name] = new MapEntry(p.name, false, size, st);
-	    var root = p.name;
-	    for ( var n in st.map ) {
+	    let root = p.name;
+	    for ( let n in st.map ) {
 		if (st.map.hasOwnProperty(n)) {
-		    var fld = st.map[n];
-		    var fldname = root + "_" + fld.name;
+		    let fld = st.map[n];
+		    let fldname = root + "_" + fld.name;
 		    map[fldname] = new MapEntry(fldname, fld.expand, size + fld.offset, fld.type);
 		}
 	    }
@@ -548,8 +549,8 @@ function layoutDefn(d:UserDefn, map, size:number, align:number):void {
 }
 
 function shallowCopy(obj) {
-    var result = {};
-    for ( var n in obj )
+    let result = {};
+    for ( let n in obj )
 	if (obj.hasOwnProperty(n))
 	    result[n] = obj[n];
     return result;
@@ -565,10 +566,10 @@ function shallowCopy(obj) {
 // include A.  But that's technically a bug in the programs.
 
 function computeClassId(name:string):number {
-    var n = name.length;
-    for (var i=0 ; i < name.length ; i++ ) {
-	var c = name.charAt(i);
-	var v = 0;
+    let n = name.length;
+    for (let i=0 ; i < name.length ; i++ ) {
+	let c = name.charAt(i);
+	let v = 0;
 	if (c >= 'A' && c <= 'Z')
 	    v = c.charCodeAt(0) - 'A'.charCodeAt(0);
 	else if (c >= 'a' && c <= 'z')
@@ -589,7 +590,7 @@ function computeClassId(name:string):number {
 // For each class, create a representation of its vtable
 
 function createVirtuals():void {
-    for ( var t of allTypes )
+    for ( let t of allTypes )
 	if (t.kind == DefnKind.Class)
 	    createVirtualsFor(<ClassDefn> t);
 }
@@ -637,11 +638,11 @@ function findMethodImplFor(cls, stopAt, name) {
 }
 
 
-// TODO: This will also match bogus things like XSELF_ because there's
+// TODO: This will also match bogus things like XSELF. because there's
 // no lookbehind.
 
-var self_getter_re = /SELF_(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
-var self_accessor_re = /SELF_(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
+const self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
+const self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
 
 // TODO: really should check validity of the name here, not hard to do.
 // Can fall back on that happening on the next pass probably.
@@ -652,10 +653,10 @@ function expandSelfAccessors():void {
 	    var body = m.body;
 	    for ( var k=0 ; k < body.length ; k++ ) {
 		body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "self, ";
+		    return t.name + "." + m.substring(5) + "SELF, ";
 		});
 		body[k] = body[k].replace(self_getter_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "(self)";
+		    return t.name + "." + m.substring(5) + "(SELF)";
 		});
 	    }
 	}
@@ -679,6 +680,7 @@ function pasteupTypes():void {
 	    if (d.kind == DefnKind.Class) {
 		var cls = <ClassDefn> d;
 		nlines.push("  CLSID: " + cls.classId + ",");
+		nlines.push("  get BASE() { return " + (cls.baseName ? cls.baseName : "null") + "; },");
 	    }
 
 	    // Now do methods.
@@ -732,19 +734,19 @@ function pasteupTypes():void {
 		var vtable = cls.vtable;
 		for ( var l=0 ; l < vtable.length ; l++ ) {
 		    var virtual = vtable[l];
-		    nlines.push(virtual.name + ": function (self, ...args) {");
-		    nlines.push("  switch (_mem_int32[self>>2]) {");
+		    nlines.push(virtual.name + ": function (SELF, ...args) {");
+		    nlines.push("  switch (_mem_int32[SELF>>2]) {");
 		    var rev = virtual.reverseCases;
 		    for ( var revname in rev ) {
 			if (rev.hasOwnProperty(revname)) {
 			    var revs = rev[revname];
 			    for ( var r=0 ; r < revs.length ; r++ )
 				nlines.push("    case " + revs[r] + ": ");
-			    nlines.push("      return " + revname + "(self, ...args);");
+			    nlines.push("      return " + revname + "(SELF, ...args);");
 			}
 		    }
 		    nlines.push("    default:");
-		    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(self, ...args)") : "throw new Error('Bad type')") + ";");
+		    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(SELF, ...args)") : "throw new Error('Bad type')") + ";");
 		    nlines.push("  }");
 		    nlines.push("},");
 		}
@@ -754,12 +756,12 @@ function pasteupTypes():void {
 
 	    if (d.kind == DefnKind.Class) {
 		var cls = <ClassDefn> d;
-		nlines.push("initInstance:function(self) { _mem_int32[self>>2]=" + cls.classId + "; return self; },");
+		nlines.push("initInstance:function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; },");
 	    }
 
 	    nlines.push("}");
 	    if (d.kind == DefnKind.Class)
-		nlines.push("Parlang._idToType[" + (<ClassDefn> d).classId + "] = " + d.name + ";");
+		nlines.push("FlatJS._idToType[" + (<ClassDefn> d).classId + "] = " + d.name + ";");
 	}
 	while (k < lines.length)
 	    nlines.push(lines[k++]);
@@ -767,46 +769,7 @@ function pasteupTypes():void {
     }
 }
 
-var acc_re = null;
-var arr_re = null;
-var new_re = null;
-
-function setupRegexes() {
-    /*
-    var ts = "int8|uint8|int16|uint16|int32|uint32|float32|float64";
-    var cs = "";
-    var us = "";
-    for ( var i=0 ; i < allTypes.length ; i++ ) {
-	ts += "|";
-	ts += allTypes[i].name;
-	if (allTypes[i].kind == DefnKind.Class) {
-	    if (cs != "")
-		cs += "|";
-	    cs += allTypes[i].name;
-	}
-	if (allTypes[i].kind == DefnKind.Struct) {
-	    if (us != "")
-		us += "|";
-	    us += allTypes[i].name;
-	}
-    }
-    var xs = "";
-    if (cs && us)
-	xs = cs + "|" + us;
-    else if (cs)
-	xs = cs;
-    else
-	xs = us;
-	*/
-
-    acc_re = new RegExp("([A-Za-z][A-Za-z0-9]*)\\.(set_|ref_)?([a-zA-Z0-9_]+)\\s*\\(", "g");
-    arr_re = new RegExp("([A-Za-z][A-Za-z0-9]*)\\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\\s*\\(", "g");
-    new_re = new RegExp("@new\\s+(?:array\\s*\\(\\s*([A-Za-z][A-Za-z0-9]*)\\s*,|([A-Za-z][A-Za-z0-9]*))", "g");
-}
-
 function expandGlobalAccessorsAndMacros():void {
-    setupRegexes();
-
     for ( var i=0 ; i < allDefs.length ; i++ ) {
 	var lines = allDefs[i][1];
 	var nlines = [];
@@ -816,21 +779,27 @@ function expandGlobalAccessorsAndMacros():void {
     }
 }
 
+const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(set_|ref_)?([a-zA-Z0-9_]+)\s*\(/g;
+const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
+const new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
+
 function expandMacrosIn(text) {
     return myExec(new_re, newMacro, myExec(arr_re, arrMacro, myExec(acc_re, accMacro, text)));
 }
 
 function myExec(re, macro, text) {
-    var old = re.lastIndex;
+    let old = re.lastIndex;
     re.lastIndex = 0;
 
-    var m;
-    while (m = re.exec(text)) {
+    for (;;) {
+	let m = re.exec(text);
+	if (!m)
+	    break;
 	// The trick here is that we may replace more than the match:
 	// the macro may eat additional input.  So the macro should
 	// be returning a new string, as well as the index at which
 	// to continue the search.
-	var [newText, newStart] = macro(text, re.lastIndex-m[0].length, m);
+	let [newText, newStart] = macro(text, re.lastIndex-m[0].length, m);
 	text = newText;
 	re.lastIndex = newStart;
     }
@@ -917,7 +886,7 @@ function accMacro(s, p, ms) {
 
     // FIXME: atomics, synchronics and all operations on them
     // Atomics should be expanded inline.
-    // Synchronics should indirect through methods on Parlang, probably.
+    // Synchronics should indirect through methods on FlatJS, probably.
 
     if (!operation)
 	operation = "get_";
@@ -1002,7 +971,7 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
 // operation is get or set
 // typename is the base type, which could be any type at all
 // field may be blank, but if it is not then it is the field name within the
-//   type, eg, for a struct Foo with field x we may see Foo.array_get_x(self, n)
+//   type, eg, for a struct Foo with field x we may see Foo.array_get_x(SELF, n)
 // firstArg and secondArg are non-optional; thirdArg is used if the operation is set
 
 function arrMacro(s, p, ms) {
@@ -1057,7 +1026,7 @@ function newMacro(s, p, ms) {
 	var t = knownTypes[classType];
 	if (!t)
 	    throw new Error("Unknown type argument to @new: " + classType);
-	var expr = "(" + classType + ".initInstance(Parlang.alloc(" + t.size + "," + t.align + ")))";
+	var expr = "(" + classType + ".initInstance(FlatJS.alloc(" + t.size + "," + t.align + ")))";
 	return [left + expr + s.substring(p + m.length),
 		left.length + expr.length ];
     }
@@ -1070,7 +1039,7 @@ function newMacro(s, p, ms) {
     var t = findType(arrayType);
     if (!t)
 	throw new Error("Unknown type argument to @new array: " + arrayType);
-    var expr = "(Parlang.alloc(" + t.size + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.align + "))";
+    var expr = "(FlatJS.alloc(" + t.size + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.align + "))";
     return [left + expr + s.substring(pp.where),
 	    left.length + expr.length];
 }
@@ -1094,9 +1063,9 @@ function endstrip(x:string):string {
 }
 
 function log2(x:number):number {
-    if (i <= 0)
+    if (x <= 0)
 	throw new Error("log2: " + x);
-    var i = 0;
+    let i = 0;
     while (x > 1) {
 	i++;
 	x >>= 1;

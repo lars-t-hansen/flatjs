@@ -2,15 +2,15 @@
 
 load("../libparlang.js");
 var ab = new ArrayBuffer(1024);
-Parlang.init(ab, true);
+FlatJS.init(ab, true);
 
-@shared class Point {
+@flatjs class Point {
     x:int32
     y:int32
 
-    @method deep6(self) {
-	SELF_set_x(-SELF_x);
-	SELF_set_y(-SELF_y);
+    @method deep6(SELF) {
+	SELF.set_x(-SELF.x);
+	SELF.set_y(-SELF.y);
     }
 } @end
 
@@ -24,21 +24,21 @@ Point.set_y(p, 20);
 assertEq(Point.x(p), 10);
 assertEq(Point.y(p), 20);
 
-assertEq(Parlang.identify(p), Point);
+assertEq(FlatJS.identify(p), Point);
 assertEq(Point.CLSID, _mem_int32[p>>2]); // White-box, layout
 
-@shared class Point3D extends Point {
+@flatjs class Point3D extends Point {
     z:int32
 
-    @method init(self, x, y, z) {
-	SELF_set_x(x);
-	SELF_set_y(y);
-	SELF_set_z(z);
-	return self;
+    @method init(SELF, x, y, z) {
+	SELF.set_x(x);
+	SELF.set_y(y);
+	SELF.set_z(z);
+	return SELF;
     }
 
-    @method deep6(self) {
-	SELF_set_z(-SELF_z);
+    @method deep6(SELF) {
+	SELF.set_z(-SELF.z);
     }
 } @end
 
@@ -57,27 +57,27 @@ assertEq(Point3D.x(q), 5);
 assertEq(Point3D.y(q), 7);
 assertEq(Point3D.z(q), 8);
 
-@shared struct Pair {
+@flatjs struct Pair {
     x:float64;
     y:int32;
 
-    @set(self, v) {
-	SELF_set_x(v.x);
-	SELF_set_y(v.y);
+    @set(SELF, v) {
+	SELF.set_x(v.x);
+	SELF.set_y(v.y);
     }
-    @get(self) {
-	return {x:SELF_x, y:SELF_y};
+    @get(SELF) {
+	return {x:SELF.x, y:SELF.y};
     }
-    @copy(self, other) {
-	SELF_set_x(Pair.x(other));
-	SELF_set_y(Pair.y(other));
+    @copy(SELF, other) {
+	SELF.set_x(Pair.x(other));
+	SELF.set_y(Pair.y(other));
     }
 } @end
 
 assertEq(Pair.SIZE, 16);
 assertEq(Pair.ALIGN, 8);	// White-box, it could be larger
 
-@shared class PairBox {
+@flatjs class PairBox {
     pad1:float32;
     pad2:float64;
     p:Pair;

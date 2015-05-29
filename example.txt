@@ -1,3 +1,94 @@
+// This assumes a few things:
+//
+//   @flatjs instead of @shared
+//   SELF. instead of SELF_
+//   SELF method calls
+//   Macro expansion of SELF.prop = expr and SELF.prop += expr
+//    (and note the chained one in init)
+
+@flatjs class IntQueueRepr
+{
+    spaceAvailable: synchronic int32
+    dataAvailable: synchronic int32
+
+    lock: synchronic int32
+    head: int32
+    tail: int32
+    used: int32
+    queue: array(int32)
+    length: int32;
+
+    @init(self, length) {
+	SELF.length = length;
+	SELF.lock = 0;
+	SELF.used = SELF.head = SELF.tail = 0;
+	SELF.queue = @new array(int32, length);
+	return self
+    }
+
+    // None of these are virtual and we should not pay for vcall overhead.
+    // But can that be optimized out (under what assumptions?) or should
+    // there be annotations?
+
+    @method enqueue(self, ints, timeout) {
+	var required = ints.length + 1;
+
+	if (!SELF.acquireWithSpaceAvailable(required, t))
+	    return false;
+
+	var q = SELF.queue;
+	var qlen = SELF.length;
+	var tail = SELF.tail;
+	int32.array_set(q, tail, ints.length);
+	tail = (tail + 1) % qlen;
+	for ( var i=0 ; i < ints.length ; i++ ) {
+	    int32.array_set(q, tail, ints[i]);
+	    tail = (tail + 1) % qlen;
+	}
+	SELF.tail = tail;
+	SELF.used += required;
+
+	SELF.releaseWithDataAvailable();
+	return true;
+    }
+
+    @method acquireWithSpaceAvailable(self required, t) {
+	var limit = typeof t != "undefined" ? Date.now() + t : Number.POSITIVE_INFINITY;
+	for (;;) {
+	    SELF.acquire();
+	    var length = SELF.length;
+	    if (length - SELF.used >= required)
+		return true;
+	    var probe = SELF.spaceAvailable;
+	    SELF.release();
+	    if (required > length)
+		throw new Error("Queue will never accept " + required + " words");
+	    var remaining = limit - Date.now();
+	    if (remaining <= 0)
+		return false;
+	    SELF.expectUpdate_spaceAvailable(probe, remaining);
+	}
+    }
+
+    @method acquire(self) {
+	while (SELF.compareExchange_lock(0, 1) != 0)
+	    SELF.expectUpdate_lock(1, Number.POSITIVE_INFINITY);
+    }
+
+    @method release(self) {
+	SELF.lock = 0;
+    }
+
+} @end
+
+function IntQueue(length) {
+    this._repr = IntQueueRepr.init(@new IntQueue, length);
+}
+
+IntQueue.prototype.enqueue = function(ints, t) { return IntQueueRepr.enqueue(this._repr, ints, t) }
+IntQueue.prototype.dequeue = function(t) { return IntQueueRepr.dequeue(this._repr, t) }
+
+// End
 
 These struct definitions:
 
