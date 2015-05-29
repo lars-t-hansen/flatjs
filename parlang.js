@@ -1,11 +1,14 @@
 /* -*- mode: javascript -*- */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 var __extends = this.__extends || function (d, b) {
     for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
     function __() { this.constructor = d; }
     __.prototype = b.prototype;
     d.prototype = new __();
 };
-// This is TypeScript 1.4 for node.js 0.10
+// This is source code for TypeScript 1.5 and node.js 0.10
 /*
  * Usage:
  *   parlang input-file ...
@@ -46,6 +49,13 @@ var PrimitiveDefn = (function (_super) {
         this.size = size;
         this.align = size;
     }
+    Object.defineProperty(PrimitiveDefn.prototype, "memory", {
+        get: function () {
+            return "_mem_" + this.name;
+        },
+        enumerable: true,
+        configurable: true
+    });
     return PrimitiveDefn;
 })(Defn);
 var UserDefn = (function (_super) {
@@ -82,13 +92,15 @@ var ClassDefn = (function (_super) {
         this.baseTypeRef = null;
         this.className = ""; // Base1>Base2>name
         this.classId = 0;
-        this.subclasses = []; // direct subclasses
+        this.subclasses = []; // direct proper subclasses
         this.vtable = null;
     }
     ClassDefn.prototype.hasMethod = function (name) {
-        for (var i = 0; i < this.methods.length; i++)
-            if (this.methods[i].name == name)
+        for (var _i = 0, _a = this.methods; _i < _a.length; _i++) {
+            var m = _a[_i];
+            if (m.name == name)
                 return true;
+        }
         return false;
     };
     return ClassDefn;
@@ -161,8 +173,8 @@ var StructDefn = (function (_super) {
         _super.call(this, file, line, name, DefnKind.Struct, props, methods, origin);
         this.hasGetMethod = false;
         this.hasSetMethod = false;
-        for (var i = 0; i < methods.length; i++) {
-            var m = methods[i];
+        for (var _i = 0; _i < methods.length; _i++) {
+            var m = methods[_i];
             if (m.kind == MethodKind.Get)
                 this.hasGetMethod = true;
             else if (m.kind == MethodKind.Set)
@@ -215,7 +227,7 @@ var MapEntry = (function () {
         get: function () {
             if (this.type.kind != DefnKind.Primitive)
                 throw new Error("No memory type available for non-primitive type " + this.type.name);
-            return "_mem_" + this.type.name;
+            return this.type.memory;
         },
         enumerable: true,
         configurable: true
@@ -232,10 +244,11 @@ var MapEntry = (function () {
     };
     return MapEntry;
 })();
+// TODO: push this into a struct, along with input/output file names
 var allDefs = [];
 function main(args) {
-    for (var i = 0; i < args.length; i++) {
-        var input_file = args[i];
+    for (var _i = 0; _i < args.length; _i++) {
+        var input_file = args[_i];
         if (input_file.length < 11 ||
             (input_file.slice(-11) != ".js.parlang" && input_file.slice(-11) != ".ts.parlang"))
             throw new Error("Bad file name (must be .js.parlang or .ts.parlang): " + input_file);
@@ -271,7 +284,7 @@ var special_re = new RegExp("^" + Os + "@(get|set|copy)" + Os + "(\\(" + Os + "s
 var method_re = new RegExp("^" + Os + "@method" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "self.*)$");
 var blank_re = new RegExp("^" + Os + Comment + "$");
 var space_re = new RegExp("^" + Os + "$");
-var prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(atomic|synchronic)?" + Ws + "(" + Id + ")" + Os + ";?" + Comment + "$");
+var prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(?:(atomic|synchronic)" + Ws + ")?(" + Id + ")" + Os + ";?" + Comment + "$");
 var aprop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "array" + Os + "\\(" + Os + "(" + Id + ")" + Os + "\\)" + Os + ";?" + Comment + "$");
 function collectDefinitions(filename, lines) {
     var defs = [];
@@ -390,8 +403,8 @@ var allTypes = [];
 function buildTypeMap() {
     for (var i = 0; i < allDefs.length; i++) {
         var defs = allDefs[i][0];
-        for (var j = 0; j < defs.length; j++) {
-            var d = defs[j];
+        for (var _i = 0; _i < defs.length; _i++) {
+            var d = defs[_i];
             if (knownTypes.hasOwnProperty(d.name))
                 throw new Error(d.file + ":" + d.line + ": Duplicate type name: " + d.name);
             knownTypes[d.name] = d;
@@ -415,9 +428,8 @@ function resolveTypeRefs() {
                 cls.baseTypeRef.subclasses.push(cls);
             }
         }
-        var props = d.props;
-        for (var j = 0; j < props.length; j++) {
-            var p = props[j];
+        for (var _i = 0, _a = d.props; _i < _a.length; _i++) {
+            var p = _a[_i];
             if (p.qual != PropQual.None) {
                 if (!atomicTypes.hasOwnProperty(p.typeName))
                     throw new Error(d.file + ":" + p.line + ": Not an atomic type: " + p.typeName);
@@ -433,8 +445,8 @@ function resolveTypeRefs() {
     }
 }
 function checkRecursion() {
-    for (var i = 0; i < allTypes.length; i++) {
-        var d = allTypes[i];
+    for (var _i = 0; _i < allTypes.length; _i++) {
+        var d = allTypes[_i];
         if (d.kind == DefnKind.Struct)
             checkRecursionForStruct(d);
         else if (d.kind == DefnKind.Class)
@@ -445,9 +457,8 @@ function checkRecursion() {
         if (d.checked)
             return;
         d.live = true;
-        var props = d.props;
-        for (var j = 0; j < props.length; j++) {
-            var p = props[i];
+        for (var _i = 0, _a = d.props; _i < _a.length; _i++) {
+            var p = _a[_i];
             if (p.isArray)
                 continue;
             if (builtinTypes.hasOwnProperty(p.typeName))
@@ -479,8 +490,8 @@ function checkRecursion() {
     }
 }
 function layoutTypes() {
-    for (var i = 0; i < allTypes.length; i++) {
-        var d = allTypes[i];
+    for (var _i = 0; _i < allTypes.length; _i++) {
+        var d = allTypes[_i];
         if (d.kind == DefnKind.Class)
             layoutClass(d);
         else
@@ -510,9 +521,8 @@ function layoutStruct(d) {
     layoutDefn(d, {}, 0, 0);
 }
 function layoutDefn(d, map, size, align) {
-    var props = d.props;
-    for (var i = 0; i < props.length; i++) {
-        var p = props[i];
+    for (var _i = 0, _a = d.props; _i < _a.length; _i++) {
+        var p = _a[_i];
         var k = p.typeRef.kind;
         if (p.isArray)
             k = DefnKind.Class;
@@ -553,6 +563,10 @@ function layoutDefn(d, map, size, align) {
             }
         }
     }
+    // Struct size must be rounded up to alignment so that n*SIZE makes a valid array:
+    // each array element must be suitably aligned.
+    if (d.kind == DefnKind.Struct)
+        size = (size + align - 1) & ~(align - 1);
     d.map = map;
     d.size = size;
     d.align = align;
@@ -595,9 +609,11 @@ function computeClassId(name) {
 }
 // For each class, create a representation of its vtable
 function createVirtuals() {
-    for (var i = 0; i < allTypes.length; i++)
-        if (allTypes[i].kind == DefnKind.Class)
-            createVirtualsFor(allTypes[i]);
+    for (var _i = 0; _i < allTypes.length; _i++) {
+        var t = allTypes[_i];
+        if (t.kind == DefnKind.Class)
+            createVirtualsFor(t);
+    }
 }
 /*
     for ( a given virtual name in me or my parent )
@@ -639,18 +655,17 @@ function findMethodImplFor(cls, stopAt, name) {
         return findMethodImplFor(cls.baseTypeRef, stopAt, name);
     throw new Error("Internal error: Method not found: " + name);
 }
-// TODO: This will also match bogus things like XSELF_ because there's no lookbehind,
-// could compensate below.
+// TODO: This will also match bogus things like XSELF_ because there's
+// no lookbehind.
 var self_getter_re = /SELF_(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
 var self_accessor_re = /SELF_(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
 // TODO: really should check validity of the name here, not hard to do.
 // Can fall back on that happening on the next pass probably.
 function expandSelfAccessors() {
-    for (var i = 0; i < allTypes.length; i++) {
-        var t = allTypes[i];
-        var meths = t.methods;
-        for (var j = 0; j < meths.length; j++) {
-            var m = meths[j];
+    for (var _i = 0; _i < allTypes.length; _i++) {
+        var t = allTypes[_i];
+        for (var _a = 0, _b = t.methods; _a < _b.length; _a++) {
+            var m = _b[_a];
             var body = m.body;
             for (var k = 0; k < body.length; k++) {
                 body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
@@ -674,11 +689,12 @@ function pasteupTypes() {
             while (k < d.origin && k < lines.length)
                 nlines.push(lines[k++]);
             nlines.push("const " + d.name + " = {");
-            nlines.push("  SIZE = " + d.size + ",");
-            nlines.push("  ALIGN = " + d.align + ",");
+            nlines.push("  NAME: \"" + d.name + "\",");
+            nlines.push("  SIZE: " + d.size + ",");
+            nlines.push("  ALIGN: " + d.align + ",");
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                nlines.push("  CLSID = " + cls.classId + ",");
+                nlines.push("  CLSID: " + cls.classId + ",");
             }
             // Now do methods.
             //
@@ -733,7 +749,7 @@ function pasteupTypes() {
                 for (var l = 0; l < vtable.length; l++) {
                     var virtual = vtable[l];
                     nlines.push(virtual.name + ": function (self, ...args) {");
-                    nlines.push("  switch (_mem_i32[self>>2]) {");
+                    nlines.push("  switch (_mem_int32[self>>2]) {");
                     var rev = virtual.reverseCases;
                     for (var revname in rev) {
                         if (rev.hasOwnProperty(revname)) {
@@ -752,54 +768,85 @@ function pasteupTypes() {
             // Now do other methods: initInstance.
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                nlines.push("initInstance:function(self) { _mem_i32[self>>2]=" + cls.classId + "; },");
+                nlines.push("initInstance:function(self) { _mem_int32[self>>2]=" + cls.classId + "; return self; },");
             }
             nlines.push("}");
+            if (d.kind == DefnKind.Class)
+                nlines.push("Parlang._idToType[" + d.classId + "] = " + d.name + ";");
         }
+        while (k < lines.length)
+            nlines.push(lines[k++]);
         allDefs[i][1] = nlines;
     }
 }
-function expandGlobalAccessorsAndMacros() {
+var acc_re = null;
+var arr_re = null;
+var new_re = null;
+function setupRegexes() {
+    /*
     var ts = "int8|uint8|int16|uint16|int32|uint32|float32|float64";
     var cs = "";
     var us = "";
-    for (var i = 0; i < allTypes.length; i++) {
-        ts += "|";
-        ts += allTypes[i].name;
-        if (allTypes[i].kind == DefnKind.Class) {
-            if (cs != "")
-                cs += "|";
-            cs += allTypes[i].name;
-        }
-        if (allTypes[i].kind == DefnKind.Struct) {
-            if (us != "")
-                us += "|";
-            us += allTypes[i].name;
-        }
+    for ( var i=0 ; i < allTypes.length ; i++ ) {
+    ts += "|";
+    ts += allTypes[i].name;
+    if (allTypes[i].kind == DefnKind.Class) {
+        if (cs != "")
+        cs += "|";
+        cs += allTypes[i].name;
+    }
+    if (allTypes[i].kind == DefnKind.Struct) {
+        if (us != "")
+        us += "|";
+        us += allTypes[i].name;
+    }
     }
     var xs = "";
     if (cs && us)
-        xs = cs + "|" + us;
+    xs = cs + "|" + us;
     else if (cs)
-        xs = cs;
+    xs = cs;
     else
-        xs = us;
-    // TODO: Do we properly handle nested matches?
-    var acc_re = new RegExp("(" + xs + ")\\.(set_|ref_)?([a-zA-Z0-9_]+)\\s*\\(", "g");
-    var arr_re = new RegExp("(" + ts + ")\\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\\s*\\(", "g");
-    var new_re = new RegExp("@new\\s+(?:(" + cs + ")|array\\s*\\(\\s*(" + ts + ")\\s*,)", "g");
+    xs = us;
+    */
+    acc_re = new RegExp("([A-Za-z][A-Za-z0-9]*)\\.(set_|ref_)?([a-zA-Z0-9_]+)\\s*\\(", "g");
+    arr_re = new RegExp("([A-Za-z][A-Za-z0-9]*)\\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\\s*\\(", "g");
+    new_re = new RegExp("@new\\s+(?:array\\s*\\(\\s*([A-Za-z][A-Za-z0-9]*)\\s*,|([A-Za-z][A-Za-z0-9]*))", "g");
+}
+function expandGlobalAccessorsAndMacros() {
+    setupRegexes();
     for (var i = 0; i < allDefs.length; i++) {
         var lines = allDefs[i][1];
         var nlines = [];
         for (var j = 0; j < lines.length; j++)
-            nlines.push(lines[j].replace(acc_re, accMacro).replace(arr_re, arrMacro).replace(new_re, newMacro));
+            nlines.push(expandMacrosIn(lines[j]));
         allDefs[i][1] = nlines;
     }
+}
+function expandMacrosIn(text) {
+    return myExec(new_re, newMacro, myExec(arr_re, arrMacro, myExec(acc_re, accMacro, text)));
+}
+function myExec(re, macro, text) {
+    var old = re.lastIndex;
+    re.lastIndex = 0;
+    var m;
+    while (m = re.exec(text)) {
+        // The trick here is that we may replace more than the match:
+        // the macro may eat additional input.  So the macro should
+        // be returning a new string, as well as the index at which
+        // to continue the search.
+        var _a = macro(text, re.lastIndex - m[0].length, m), newText = _a[0], newStart = _a[1];
+        text = newText;
+        re.lastIndex = newStart;
+    }
+    re.lastIndex = old;
+    return text;
 }
 var ParamParser = (function () {
     function ParamParser(input, pos) {
         this.input = input;
         this.pos = pos;
+        this.lim = 0;
         this.done = false;
         this.lim = input.length;
     }
@@ -811,6 +858,7 @@ var ParamParser = (function () {
         var start = this.pos;
         // TODO: Really should outlaw regular expressions, but much harder, and somewhat marginal
         // TODO: Really should handle /* .. */ comments
+        // TODO: Check that parens and braces nest properly
         while (this.pos < this.lim) {
             switch (this.input.charAt(this.pos++)) {
                 case ',':
@@ -818,14 +866,20 @@ var ParamParser = (function () {
                         return cleanupArg(this.input.substring(start, this.pos - 1));
                     break;
                 case '(':
+                case '{':
+                case '[':
                     depth++;
+                    break;
+                case '}':
+                case ']':
+                    depth--;
                     break;
                 case ')':
                     if (depth == 0) {
                         this.done = true;
                         return cleanupArg(this.input.substring(start, this.pos - 1));
                     }
-                    --depth;
+                    depth--;
                     break;
                 case '\'':
                 case '"':
@@ -856,9 +910,13 @@ function cleanupArg(s) {
         return null;
     return s;
 }
-// FOO!  How to /get rid of/ the arguments that are parsed?  They are outside the
-// matched string.  Need to step away from using replace().  Probably just as well.
-function accMacro(m, className, operation, propName, p, s) {
+function accMacro(s, p, ms) {
+    var m = ms[0];
+    var className = ms[1];
+    var operation = ms[2];
+    var propName = ms[3];
+    var nomatch = [s, p + m.length];
+    var left = s.substring(0, p);
     // FIXME: atomics, synchronics and all operations on them
     // Atomics should be expanded inline.
     // Synchronics should indirect through methods on Parlang, probably.
@@ -866,69 +924,84 @@ function accMacro(m, className, operation, propName, p, s) {
         operation = "get_";
     var cls = knownTypes[className];
     if (!cls)
-        return m;
+        return nomatch;
     var fld = cls.findAccessibleFieldFor(operation, propName);
-    if (!fld) {
-        console.log("No field for " + propName);
-        return m;
-    }
+    if (!fld)
+        return nomatch;
     // TODO: Emit warnings for arity abuse, at a minimum.
-    var as = (new ParamParser(s, p + m.length)).allArgs();
+    var pp = new ParamParser(s, p + m.length);
+    var as = (pp).allArgs();
     switch (operation) {
         case "get_":
             if (as.length != 1) {
                 console.log("Bad get arity " + propName + " " + as.length);
-                return m;
+                return nomatch;
             }
             ;
             break;
         case "set_":
             if (as.length != 2) {
                 console.log("Bad set arity " + propName + " " + as.length);
-                return m;
+                return nomatch;
             }
             ;
             break;
     }
-    var ref = "(" + cleanup(as[0]) + "+" + fld.offset + ")";
-    if (operation == "ref_")
-        return ref;
-    var mem = "", size = 0;
-    if (fld.type.kind == DefnKind.Primitive) {
-        mem = fld.memory;
-        size = fld.size;
+    var ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + fld.offset + ")";
+    if (operation == "ref_") {
+        return [left + ref + s.substring(pp.where),
+            left.length + ref.length];
     }
-    else if (fld.type.kind == DefnKind.Class) {
+    return loadFromRef(ref, fld.type, s, left, operation, pp, as[1], nomatch);
+}
+function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
+    var mem = "", size = 0;
+    if (type.kind == DefnKind.Primitive) {
+        mem = type.memory;
+        size = type.size;
+    }
+    else if (type.kind == DefnKind.Class) {
         mem = "_mem_int32";
         size = 4;
     }
     if (size > 0) {
         switch (operation) {
-            case "get_":
-                return "(" + mem + "[" + ref + ">>" + log2(size) + "])";
-            case "set_":
-                return "(" + mem + "[" + ref + ">>" + log2(size) + "] = " + cleanup(as[1]) + ")";
+            case "get_": {
+                var expr = "(" + mem + "[" + ref + ">>" + log2(size) + "])";
+                return [left + expr + s.substring(pp.where),
+                    left.length + expr.length];
+            }
+            case "set_": {
+                var expr = "(" + mem + "[" + ref + ">>" + log2(size) + "] = " + expandMacrosIn(endstrip(rhs)) + ")";
+                return [left + expr + s.substring(pp.where),
+                    left.length + expr.length];
+            }
             default:
-                console.log("Bad operation");
-                return m; // Warning desired
+                return nomatch; // Warning desired
         }
     }
     else {
-        var t = fld.type;
+        var t = type;
         // Field type is a structure.  If the structure type has a getter then getting is allowed
         // and should be rewritten as a call to the getter, passing the field reference.
         // Ditto setter, which will also pass secondArg.
         switch (operation) {
-            case "get_":
+            case "get_": {
                 if (!t.hasGetMethod)
-                    return m; // Warning desired
-                return "(" + t.name + "._get_impl(" + ref + "))";
-            case "set_":
+                    return nomatch; // Warning desired
+                var expr = "(" + t.name + "._get_impl(" + ref + "))";
+                return [left + expr + s.substring(pp.where),
+                    left.length + expr.length];
+            }
+            case "set_": {
                 if (!t.hasSetMethod)
-                    return m; // Warning desired
-                return "(" + t.name + "._set_impl(" + ref + "," + cleanup(as[1]) + "))";
+                    return nomatch; // Warning desired
+                var expr = "(" + t.name + "._set_impl(" + ref + "," + expandMacrosIn(endstrip(rhs)) + "))";
+                return [left + expr + s.substring(pp.where),
+                    left.length + expr.length];
+            }
             default:
-                return m; // Warning desired
+                return nomatch; // Warning desired
         }
     }
 }
@@ -937,27 +1010,72 @@ function accMacro(m, className, operation, propName, p, s) {
 // field may be blank, but if it is not then it is the field name within the
 //   type, eg, for a struct Foo with field x we may see Foo.array_get_x(self, n)
 // firstArg and secondArg are non-optional; thirdArg is used if the operation is set
-function arrMacro(m, typeName, operation, field, p, s) {
-    var as = (new ParamParser(s, p + m.length)).allArgs();
-    console.log(typeName + " " + operation + " " + field + " [" + as.join(" , ") + "]  " + s.substring(p + m.length));
-    // FIXME: array accessors on structures
-    // FIXME: array accessors on primitive types and pointers
-    // FIXME: need a third arg, too, for setter
-    return m;
+function arrMacro(s, p, ms) {
+    var m = ms[0];
+    var typeName = ms[1];
+    var operation = ms[2];
+    var field = ms[3];
+    var nomatch = [s, p + m.length];
+    var type = findType(typeName);
+    if (!type)
+        return nomatch;
+    var pp = new ParamParser(s, p + m.length);
+    var as = (pp).allArgs();
+    // TODO: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
+    switch (operation) {
+        case "get":
+            if (as.length != 2)
+                return nomatch;
+            operation = "get_";
+            break;
+        case "set":
+            if (as.length != 3)
+                return nomatch;
+            operation = "set_";
+            break;
+    }
+    if (type.kind == DefnKind.Primitive) {
+        if (field)
+            return nomatch;
+    }
+    else if (type.kind == DefnKind.Class) {
+        if (field)
+            return nomatch;
+    }
+    var ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + type.size + "*" + expandMacrosIn(endstrip(as[1])) + ")";
+    if (field) {
+        var fld = type.findAccessibleFieldFor(operation, field);
+        if (!fld)
+            return nomatch;
+        ref = "(" + ref + "+" + fld.offset + ")";
+        type = fld.type;
+    }
+    return loadFromRef(ref, type, s, s.substring(0, p), operation, pp, as[2], nomatch);
 }
 // Since @new is new syntax, we throw errors for all misuse.
-function newMacro(m, x, z, p, s) {
-    if (x !== undefined) {
-        var t = knownTypes[x];
+function newMacro(s, p, ms) {
+    var m = ms[0];
+    var arrayType = ms[1];
+    var classType = ms[2];
+    var left = s.substring(0, p);
+    if (classType !== undefined) {
+        var t = knownTypes[classType];
         if (!t)
-            throw new Error("Unknown type argument to @new: " + x);
-        return "(" + x + ".initInstance(Parlang.alloc(" + t.size + "," + t.align + ")))";
+            throw new Error("Unknown type argument to @new: " + classType);
+        var expr = "(" + classType + ".initInstance(Parlang.alloc(" + t.size + "," + t.align + ")))";
+        return [left + expr + s.substring(p + m.length),
+            left.length + expr.length];
     }
-    var as = (new ParamParser(s, p + m.length)).allArgs();
+    var pp = new ParamParser(s, p + m.length);
+    var as = pp.allArgs();
     if (as.length != 1)
-        throw new Error("Wrong number of arguments to @new array(" + z + ")");
-    var t = findType(z);
-    return "(Parlang.alloc(" + z.size + " * " + cleanup(as[0]) + ", " + z.align + "))";
+        throw new Error("Wrong number of arguments to @new array(" + arrayType + ")");
+    var t = findType(arrayType);
+    if (!t)
+        throw new Error("Unknown type argument to @new array: " + arrayType);
+    var expr = "(Parlang.alloc(" + t.size + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.align + "))";
+    return [left + expr + s.substring(pp.where),
+        left.length + expr.length];
 }
 function findType(name) {
     if (builtinTypes.hasOwnProperty(name))
@@ -969,7 +1087,7 @@ function findType(name) {
 // This can also check if x is already properly parenthesized, though that
 // involves counting parens, at least trivially (and then does it matter?).
 // Consider (a).(b), which should be parenthesized as ((a).(b)).
-function cleanup(x) {
+function endstrip(x) {
     if (/^[a-zA-Z0-9]+$/.test(x))
         return x;
     return "(" + x + ")";

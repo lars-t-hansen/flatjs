@@ -1,0 +1,129 @@
+/* -*- mode: javascript -*- */
+
+load("../libparlang.js");
+var ab = new ArrayBuffer(1024);
+Parlang.init(ab, true);
+
+@shared class Point {
+    x:int32
+    y:int32
+
+    @method deep6(self) {
+	SELF_set_x(-SELF_x);
+	SELF_set_y(-SELF_y);
+    }
+} @end
+
+assertEq(Point.NAME, "Point");
+assertEq(Point.SIZE, 12);
+assertEq(Point.ALIGN, 4);	         // White-box
+
+var p = @new Point;
+Point.set_x(p, 10);
+Point.set_y(p, 20);
+assertEq(Point.x(p), 10);
+assertEq(Point.y(p), 20);
+
+assertEq(Parlang.identify(p), Point);
+assertEq(Point.CLSID, _mem_int32[p>>2]); // White-box
+
+@shared class Point3D extends Point {
+    z:int32
+
+    @method init(self, x, y, z) {
+	SELF_set_x(x);
+	SELF_set_y(y);
+	SELF_set_z(z);
+	return self;
+    }
+
+    @method deep6(self) {
+	SELF_set_z(-SELF_z);
+    }
+} @end
+
+var q = Point3D.init(@new Point3D, 5, 7, 8);
+assertEq(Point.x(q), 5);
+assertEq(Point.y(q), 7);
+assertEq(Point3D.x(q), 5);
+assertEq(Point3D.y(q), 7);
+assertEq(Point3D.z(q), 8);
+Point3D.deep6(q);
+assertEq(Point3D.x(q), 5);
+assertEq(Point3D.y(q), 7);
+assertEq(Point3D.z(q), -8);
+Point.deep6(q);			// Virtual, so invoke Point3D.deep6
+assertEq(Point3D.x(q), 5);
+assertEq(Point3D.y(q), 7);
+assertEq(Point3D.z(q), 8);
+
+@shared struct Pair {
+    x:float64;
+    y:int32;
+
+    @set(self, v) {
+	SELF_set_x(v.x);
+	SELF_set_y(v.y);
+    }
+    @get(self) {
+	return {x:SELF_x, y:SELF_y};
+    }
+    @copy(self, other) {
+	SELF_set_x(Pair.x(other));
+	SELF_set_y(Pair.y(other));
+    }
+} @end
+
+assertEq(Pair.SIZE, 16);	// White-box?
+assertEq(Pair.ALIGN, 8);	// White-box
+
+@shared class PairBox {
+    pad1:float32;
+    pad2:float64;
+    p:Pair;
+    pad3:int32;
+} @end
+
+var pr = @new PairBox;
+PairBox.set_p_x(pr, 10);
+PairBox.set_p_y(pr, 20);
+
+PairBox.set_pad1(pr, 1);
+PairBox.set_pad2(pr, 2);
+PairBox.set_pad3(pr, 3);
+
+assertEq(PairBox.p_x(pr), 10);
+assertEq(PairBox.p_y(pr), 20);
+
+assertEq(PairBox.pad1(pr), 1);
+assertEq(PairBox.pad2(pr), 2);
+assertEq(PairBox.pad3(pr), 3);
+
+var ia = @new array(int32, 7);
+for ( var i=0 ; i < 7 ; i++ )
+    int32.array_set(ia, i, -i);
+
+for ( var i=0 ; i < 7 ; i++ )
+    assertEq(int32.array_get(ia, i), -i|0);
+
+var pa = @new array(Pair, 4);
+for ( var i=0 ; i < 4 ; i++ ) {
+    Pair.array_set_x(pa, i, i);
+    Pair.array_set_y(pa, i, -i);
+}
+
+for ( var i=0 ; i < 4 ; i++ ) {
+    assertEq(Pair.array_get_x(pa, i), i);
+    assertEq(Pair.array_get_y(pa, i), -i|0);
+}
+
+for ( var i=0 ; i < 4 ; i++ )
+    var v = Pair.array_set(pa, i, {x:i+5, y:i-5});
+
+for ( var i=0 ; i < 4 ; i++ ) {
+    var v = Pair.array_get(pa, i);
+    assertEq(v.x, i+5);
+    assertEq(v.y, i-5);
+}
+
+print("Done");

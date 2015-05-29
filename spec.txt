@@ -366,3 +366,7 @@ These are ideas it would be nice to support:
 * String types
 * Instead of T.ref_fld(self) we could operate with T.offset_fld as a constant, if it matters
 * It would be useful to distinguish between '@method' and '@virtual', possibly.
+* Some sort of macro for SELF_x = expr would be lovely, to avoid SELF_set_x(expr)
+* (Nitpick) Since parlang can be used on non-shared memory,
+  - "parlang" is a malapropos name
+  - "shared class" and "shared struct" are not obvious names

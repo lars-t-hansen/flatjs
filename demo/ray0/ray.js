@@ -2,11 +2,11 @@
 // Traces a scene and writes to a canvas.
 //
 // lth@acm.org / lhansen@mozilla.com, winter 2012 and later.
-//
-// The language is straight Javascript and runs properly in Safari and
-// Chrome well as in Firefox.  (The program had to be modified to run
-// in Chrome because Chrome appears to hoist "const" declarations out
-// of loops.)
+
+// Parlang setup.
+
+const RAW_MEMORY = new SharedArrayBuffer(height*width*4 + 65536);
+Parlang.init(RAW_MEMORY, true);
 
 // CONFIGURATION
 
@@ -73,12 +73,12 @@ function mulrefi(a, c) { return DL3(Vec3.x(a)*c, Vec3.y(a)*c, Vec3.z(a)*c); }
     ambient:   Vec3
     mirror:    float64
 
-    @set(self, diffuse, specular, shininess, ambient, mirror) {
-	SELF_set_diffuse(diffuse);
-	SELF_set_specular(specular);
-	SELF_set_shininess(shininess);
-	SELF_set_ambient(ambient);
-	SELF_set_mirror(mirror);
+    @set(self, m) {
+	SELF_set_diffuse(m.diffuse);
+	SELF_set_specular(m.specular);
+	SELF_set_shininess(m.shininess);
+	SELF_set_ambient(m.ambient);
+	SELF_set_mirror(m.mirror);
     }
 } @end
 
@@ -108,10 +108,10 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     @method init(self, objects) {
 	var len = objects.length;
 	SELF_set_length(len)
-	var os = @new array(Surface, len)
+	var os = @new array(Surface, len);
 	for ( var i=0 ; i < len ; i++ )
 	    Surface.array_set(os, i, objects[i]);
-	SELF_set_objects(objects)
+	SELF_set_objects(objects);
     }
 
     @method intersect(self, eye, ray, min, max) {
@@ -140,7 +140,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     radius: float64
 
     @method init(self, material, center, radius) {
-	Surface.init_impl(self, material)
+	Surface.init(self, material)
 	SELF_set_center(center)
 	SELF_set_radius(radius)
     }
@@ -173,7 +173,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 @shared class Triangle extends Surface {
 
     @method init(self, material, v1, v2, v3) {
-	Surface.init_impl(self, material)
+	Surface.init(self, material)
 	SELF_set_v1(v1);
 	SELF_set_v2(v2);
 	SELF_set_v3(v3);
@@ -222,14 +222,14 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     width: int32
 
     @method init(self, height, width, color) {
-	SELF_set_height(height)
-	SELF_set_width(width)
-	var data = @new array(int32, height*width)
+	SELF_set_height(height);
+	SELF_set_width(width);
+	var data = @new array(int32, height*width);
 	var c = (255<<24)|((255*color.z)<<16)|((255*color.y)<<8)|(255*color.x)
 	for ( var i=0, l=width*height ; i < l ; i++ )
 	    int32.array_set(data, i, c);
-	SELF_set_data(data)
-	return self
+	SELF_set_data(data);
+	return self;
     }
 
     // For debugging only
@@ -251,9 +251,6 @@ const g_right = 2;
 const g_top = 1.5;
 const g_bottom = -1.5;
 
-const sab = new SharedArrayBuffer(height*width*4 + 65536);
-
-Parlang.init(sab, true);
 const bits = Bitmap_init(@new Bitmap, height, width, DL3(152.0/256.0, 251.0/256.0, 152.0/256.0));
 
 function main() {
@@ -271,8 +268,10 @@ function main() {
     var mycanvas = document.getElementById("mycanvas");
     var cx = mycanvas.getContext('2d');
     var id  = cx.createImageData(width, height);
-    // FIXME: will this work properly?
-    id.data.set(new SharedUint8Array(bits.data.buffer));
+    // FIXME: will set() work properly?
+    // TODO: This operation, extracting a typed array from raw memory at an address,
+    // could usefully be added to libparlang, to avoid dealing with RAW_MEMORY.
+    id.data.set(new SharedUint8Array(RAW_MEMORY, Bitmap_data(bits), width*height*4));
     cx.putImageData( id, 0, 0 );
     document.getElementById("mycaption").innerHTML = "Time=" + (now - then) + "ms";
 
