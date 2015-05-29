@@ -4,15 +4,7 @@
 
 /* libparlang.js - load this before loading your compiled Parlang program.
  *
- * Call Parlang.init(buffer [, initialize]) before using.  Buffer can
- * be an ArrayBuffer or SharedArrayBuffer.  In the latter case, all
- * workers must pass the same buffer.
- *
- * "initialize" should be true in exactly one worker and that call
- * must return before any worker can call any other methods on the
- * Parlang object.  Normally, you would allocate your memory in the
- * main thread, call Parlang.init(sab, true) in the main thread,
- * and then distribute the sab to the workers.
+ * Call Parlang.init before using, see documentation below.
  */
 
 var _mem_int8 = null;
@@ -35,21 +27,46 @@ var _mem_float64 = null;
 
 const Parlang =
 {
-    init: function (sab, initialize) {
-	if (sab instanceof SharedArrayBuffer)
-	    _Parlang_init_sab(this, sab, initialize);
-	else if (sab instanceof ArrayBuffer)
-	    _Parlang_init_ab(this, sab, initialize);
+    /*
+     * Initialize the local Parlang instance.
+     *
+     * Buffer can be an ArrayBuffer or SharedArrayBuffer.  In the
+     * latter case, all workers must pass the same buffer during
+     * initialization.
+     *
+     * "initialize" must be true in exactly one agent and that call
+     * must return before any agent can call any other methods on
+     * their local Parlang objects.  Normally, you would allocate your
+     * memory in the main thread, call Parlang.init(buffer, true) in
+     * the main thread, and then distribute the buffer to workers.
+     */
+    init: function (buffer, initialize) {
+	if (buffer instanceof SharedArrayBuffer)
+	    _Parlang_init_sab(this, buffer, initialize);
+	else if (buffer instanceof ArrayBuffer)
+	    _Parlang_init_ab(this, buffer, initialize);
 	else
 	    throw new Error("Parlang can be built only on SharedArrayBuffer or ArrayBuffer");
     },
 
-    // Allocate memory with the appropriate alignment.
+    /*
+     * Given a nonnegative size in bytes and a nonnegative
+     * power-of-two alignment, allocate an object of the necessary
+     * size (or larger) and required alignment, and return its
+     * address.
+     *
+     * Return NULL if no memory is available.
+     */
     alloc: function (nbytes, alignment) {
 	// Overridden during initialization.
 	throw new Error("Not initialized" );
     },
 
+    /*
+     * As alloc, but zero-initialize the memory.  There is no
+     * synchronization after initialization; the zero bits have not
+     * been published.
+     */
     calloc: function (nbytes, alignment) {
 	// Allocate and zero at least four bytes.
 	nbytes = (nbytes + 3) & ~3;
@@ -62,13 +79,20 @@ const Parlang =
 	return p;
     },
 
+    /*
+     * Given a pointer returned from alloc or calloc, free the memory.
+     * p may be NULL in which case the call does nothing.
+     */
     free: function (p) {
 	// Drop it on the floor, for now
 	// In the future: figure out the size from the header or other info,
 	// add to free list, etc etc.
     },
 
-    // Given an pointer to a class instance, return its type object.
+    /*
+     * Given an pointer to a class instance, return its type object.
+     * Return null if no type object is found.
+     */
     identify: function (p) {
 	if (p == 0)
 	    return null;
@@ -77,6 +101,7 @@ const Parlang =
 	return null;
     },
 
+    // Private.
     _idToType: {}
 };
 
