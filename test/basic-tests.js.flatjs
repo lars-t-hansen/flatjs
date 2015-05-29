@@ -1,6 +1,6 @@
 /* -*- mode: javascript -*- */
 
-load("../libparlang.js");
+load("../libflatjs.js");
 var ab = new ArrayBuffer(1024);
 FlatJS.init(ab, true);
 

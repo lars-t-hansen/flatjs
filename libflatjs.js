@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* libparlang.js - load this before loading your compiled FlatJS program.
+/* libflatjs.js - load this before loading your compiled FlatJS program.
  *
  * Call FlatJS.init before using, see documentation below.
  */
@@ -123,11 +123,11 @@ const FlatJS =
     _idToType: {}
 };
 
-function _FlatJS_init_sab(parlang, sab, initialize) {
+function _FlatJS_init_sab(flatjs, sab, initialize) {
     var len = sab.byteLength & ~7;
     if (len < 16)
 	throw new Error("The memory is too small even for metadata");
-    parlang.alloc = _FlatJS_alloc_sab;
+    flatjs.alloc = _FlatJS_alloc_sab;
     _mem_int8 = new SharedInt8Array(sab, 0, len);
     _mem_uint8 = new SharedUint8Array(sab, 0, len);
     _mem_int16 = new SharedInt16Array(sab, 0, len/2);
@@ -142,11 +142,11 @@ function _FlatJS_init_sab(parlang, sab, initialize) {
     }
 }
 
-function _FlatJS_init_ab(parlang, ab, initialize) {
+function _FlatJS_init_ab(flatjs, ab, initialize) {
     var len = ab.byteLength & ~7;
     if (len < 16)
 	throw new Error("The memory is too small even for metadata");
-    parlang.alloc = _FlatJS_alloc_ab;
+    flatjs.alloc = _FlatJS_alloc_ab;
     _mem_int8 = new Int8Array(ab, 0, len);
     _mem_uint8 = new Uint8Array(ab, 0, len);
     _mem_int16 = new Int16Array(ab, 0, len/2);
@@ -189,11 +189,11 @@ function _FlatJS_alloc_ab(nbytes, alignment) {
 }
 
 const NULL = 0;
-const int8 = { SIZE:1, ALIGN:1 };
-const uint8 = { SIZE:1, ALIGN:1 };
-const int16 = { SIZE:2, ALIGN:2 };
-const uint16 = { SIZE:2, ALIGN:2 };
-const int32 = { SIZE:4, ALIGN:4 };
-const uint32 = { SIZE:4, ALIGN:4 };
-const float32 = { SIZE:4, ALIGN:4 };
-const float64 = { SIZE:8, ALIGN:8 };
+const int8 = { SIZE:1, ALIGN:1, NAME:"int8" };
+const uint8 = { SIZE:1, ALIGN:1, NAME:"uint8" };
+const int16 = { SIZE:2, ALIGN:2, NAME:"int16" };
+const uint16 = { SIZE:2, ALIGN:2, NAME:"uint16" };
+const int32 = { SIZE:4, ALIGN:4, NAME:"int32" };
+const uint32 = { SIZE:4, ALIGN:4, NAME:"uint32" };
+const float32 = { SIZE:4, ALIGN:4, NAME:"float32" };
+const float64 = { SIZE:8, ALIGN:8, NAME:"float64" };

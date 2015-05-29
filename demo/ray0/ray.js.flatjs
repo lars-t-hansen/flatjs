@@ -3,10 +3,10 @@
 //
 // lth@acm.org / lhansen@mozilla.com, winter 2012 and later.
 
-// Parlang setup.
+// FlatJS setup.
 
 const RAW_MEMORY = new SharedArrayBuffer(height*width*4 + 65536);
-Parlang.init(RAW_MEMORY, true);
+FlatJS.init(RAW_MEMORY, true);
 
 // CONFIGURATION
 
@@ -36,16 +36,16 @@ function normalize(a) { var d = length(a); return DL3(a.x/d, a.y/d, a.z/d); }
 function cross(a, b) { return DL3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x); }
 function dot(a, b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 
-@shared struct Vec3 {
+@flatjs struct Vec3 {
     x: float64
     y: float64
     z: float64
 
-    @get(self) {
-	return DL3(SELF_x, SELF_y, SELF_z);
+    @get(SELF) {
+	return DL3(SELF.x, SELF.y, SELF.z);
     }
 
-    @set(self, ...args) {
+    @set(SELF, ...args) {
 	if (args.length == 1) {
 	    var v = args[0];
 	    x = v.x;
@@ -66,19 +66,19 @@ function subref(a, b) { return DL3(a.x-Vec3.x(b), a.y-Vec3.y(b), a.z-Vec3.z(b));
 function subrefref(a, b) { return DL3(Vec3.x(a)-Vec3.x(b), Vec3.y(a)-Vec3.y(b), Vec3.z(a)-Vec3.z(b)); }
 function mulrefi(a, c) { return DL3(Vec3.x(a)*c, Vec3.y(a)*c, Vec3.z(a)*c); }
 
-@shared struct Material {
+@flatjs struct Material {
     diffuse:   Vec3
     specular:  Vec3
     shininess: float64
     ambient:   Vec3
     mirror:    float64
 
-    @set(self, m) {
-	SELF_set_diffuse(m.diffuse);
-	SELF_set_specular(m.specular);
-	SELF_set_shininess(m.shininess);
-	SELF_set_ambient(m.ambient);
-	SELF_set_mirror(m.mirror);
+    @set(SELF, m) {
+	SELF.set_diffuse(m.diffuse);
+	SELF.set_specular(m.specular);
+	SELF.set_shininess(m.shininess);
+	SELF.set_ambient(m.ambient);
+	SELF.set_mirror(m.mirror);
     }
 } @end
 
@@ -90,36 +90,37 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     this.mirror = mirror;
 }
 
-@shared class Surface {
+@flatjs class Surface {
     material: Material
 
-    @method init(self, material) {
-	SELF_set_material(material)
+    @method init(SELF, material) {
+	SELF.set_material(material)
     }
 
     @method intersect(self, eye, ray, min, max) { throw "Pure: Surface.intersect" }
     @method normal(self, p) { throw "Pure: Surface.normal" }
 } @end
 
-@shared class Scene extends Surface {
+@flatjs class Scene extends Surface {
     length: int32
     objects: array(Surface)
 
-    @method init(self, objects) {
+    @method init(SELF, objects) {
 	var len = objects.length;
-	SELF_set_length(len)
+	SELF.set_length(len)
 	var os = @new array(Surface, len);
 	for ( var i=0 ; i < len ; i++ )
 	    Surface.array_set(os, i, objects[i]);
-	SELF_set_objects(objects);
+	SELF.set_objects(objects);
+	return SELF;
     }
 
-    @method intersect(self, eye, ray, min, max) {
+    @method intersect(SELF, eye, ray, min, max) {
 	var min_obj = NULL;
 	var min_dist = SENTINEL;
 
-	var objs = SELF_objects;
-	for ( var idx=0, limit=SELF_length ; idx < limit ; idx++ ) {
+	var objs = SELF.objects;
+	for ( var idx=0, limit=SELF.length ; idx < limit ; idx++ ) {
 	    var tmp = Surface.intersect(objs + idx*Surface.SIZE, eye, ray, min, max);
 	    var obj = tmp.obj;
 	    var dist = tmp.dist;
@@ -135,21 +136,22 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
 } @end
 
-@shared class Sphere extends Surface {
+@flatjs class Sphere extends Surface {
     center: Vec3
     radius: float64
 
-    @method init(self, material, center, radius) {
-	Surface.init(self, material)
-	SELF_set_center(center)
-	SELF_set_radius(radius)
+    @method init(SELF, material, center, radius) {
+	Surface.init(SELF, material)
+	SELF.set_center(center)
+	SELF.set_radius(radius)
+	return SELF;
     }
 
-    @method intersect(self, eye, ray, min, max) {
+    @method intersect(SELF, eye, ray, min, max) {
 	var DdotD = dot(ray, ray);
-	var EminusC = subref(eye, SELF_ref_center);
+	var EminusC = subref(eye, SELF.ref_center);
 	var B = dot(ray, EminusC);
-	var disc = B*B - DdotD*(dot(EminusC,EminusC) - SELF_radius*SELF_radius);
+	var disc = B*B - DdotD*(dot(EminusC,EminusC) - SELF.radius*SELF.radius);
 	if (disc < 0.0)
 	    return {obj:NULL, dist:0};
 	var s1 = (-B + Math.sqrt(disc))/DdotD;
@@ -162,40 +164,41 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	var _dist = Math.min(s1,s2);
 	if (_dist == SENTINEL)
 	    return {obj:NULL, dist:0};
-	return {obj:self, dist:_dist};
+	return {obj:SELF, dist:_dist};
     }
 
-    @method normal(self, p) {
-	return divi(subref(p, SELF_ref_center), SELF_radius);
+    @method normal(SELF, p) {
+	return divi(subref(p, SELF.ref_center), SELF.radius);
     }
 } @end
 
-@shared class Triangle extends Surface {
+@flatjs class Triangle extends Surface {
 
-    @method init(self, material, v1, v2, v3) {
-	Surface.init(self, material)
-	SELF_set_v1(v1);
-	SELF_set_v2(v2);
-	SELF_set_v3(v3);
+    @method init(SELF, material, v1, v2, v3) {
+	Surface.init(SELF, material)
+	SELF.set_v1(v1);
+	SELF.set_v2(v2);
+	SELF.set_v3(v3);
+	return SELF;
     }
 
-    @method intersect(self, eye, ray, min, max) {
+    @method intersect(SELF, eye, ray, min, max) {
 	// TODO: observe that values that do not depend on g, h, and i can be precomputed
 	// and stored with the triangle (for a given eye position), at some (possibly significant)
 	// space cost.  Notably the numerator of "t" is invariant, as are many factors of the
 	// numerator of "gamma".
-	var a = SELF_v1_x - SELF_v2_x;
-	var b = SELF_v1_y - SELF_v2_y;
-	var c = SELF_v1_z - SELF_v2_z;
-	var d = SELF_v1_x - SELF_v3_x;
-	var e = SELF_v1_y - SELF_v3_y;
-	var f = SELF_v1_z - SELF_v3_z;
+	var a = SELF.v1_x - SELF.v2_x;
+	var b = SELF.v1_y - SELF.v2_y;
+	var c = SELF.v1_z - SELF.v2_z;
+	var d = SELF.v1_x - SELF.v3_x;
+	var e = SELF.v1_y - SELF.v3_y;
+	var f = SELF.v1_z - SELF.v3_z;
 	var g = ray.x;
 	var h = ray.y;
 	var i = ray.z;
-	var j = SELF_v1_x - eye.x;
-	var k = SELF_v1_y - eye.y;
-	var l = SELF_v1_z - eye.z;
+	var j = SELF.v1_x - eye.x;
+	var k = SELF.v1_y - eye.y;
+	var l = SELF.v1_z - eye.z;
 	var M = a*(e*i - h*f) + b*(g*f - d*i) + c*(d*h - e*g);
 	var t = -((f*(a*k - j*b) + e*(j*c - a*l) + d*(b*l - k*c))/M);
 	if (t < min || t > max)
@@ -206,40 +209,40 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	var beta = (j*(e*i - h*f) + k*(g*f - d*i) + l*(d*h - e*g))/M;
 	if (beta < 0.0 || beta > 1.0 - gamma)
 	    return {obj:NULL,dist:0};
-	return {obj:self, dist:t};
+	return {obj:SELF, dist:t};
     }
 
-    @method normal(self, p) {
+    @method normal(SELF, p) {
 	// TODO: Observe that the normal is invariant and can be stored with the triangle
-	return normalize(cross(subrefref(SELF_ref_v2, SELF_ref_v1), subrefref(SELF_ref_v3, SELF_ref_v1)));
+	return normalize(cross(subrefref(SELF.ref_v2, SELF.ref_v1), subrefref(SELF.ref_v3, SELF.ref_v1)));
     }
 
 } @end
 
-@shared class Bitmap {
+@flatjs class Bitmap {
     data: array(int32)
     height: int32
     width: int32
 
-    @method init(self, height, width, color) {
-	SELF_set_height(height);
-	SELF_set_width(width);
+    @method init(SELF, height, width, color) {
+	SELF.set_height(height);
+	SELF.set_width(width);
 	var data = @new array(int32, height*width);
 	var c = (255<<24)|((255*color.z)<<16)|((255*color.y)<<8)|(255*color.x)
 	for ( var i=0, l=width*height ; i < l ; i++ )
 	    int32.array_set(data, i, c);
-	SELF_set_data(data);
-	return self;
+	SELF.set_data(data);
+	return SELF;
     }
 
     // For debugging only
-    @method ref(self, y, x) {
-	return int32.array_get(SELF_data, (SELF_height-y)*SELF_width+x);
+    @method ref(SELF, y, x) {
+	return int32.array_get(SELF.data, (SELF.height-y)*SELF.width+x);
     }
 
     // Not a hot function
-    @method setColor(self, y, x, v) {
-	int32.array_set(SELF_data, (SELF_height-y)*SELF_width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
+    @method setColor(SELF, y, x, v) {
+	int32.array_set(SELF.data, (SELF.height-y)*SELF.width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
     }
 } @end
 
@@ -270,7 +273,7 @@ function main() {
     var id  = cx.createImageData(width, height);
     // FIXME: will set() work properly?
     // TODO: This operation, extracting a typed array from raw memory at an address,
-    // could usefully be added to libparlang, to avoid dealing with RAW_MEMORY.
+    // could usefully be added to libflatjs, to avoid dealing with RAW_MEMORY.
     id.data.set(new SharedUint8Array(RAW_MEMORY, Bitmap_data(bits), width*height*4));
     cx.putImageData( id, 0, 0 );
     document.getElementById("mycaption").innerHTML = "Time=" + (now - then) + "ms";

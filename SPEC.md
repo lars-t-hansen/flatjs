@@ -1,32 +1,33 @@
-# Parlang
+# FlatJS
 
 23 May 2015 / lhansen@mozilla.com
 
 ## Introduction
 
-Parlang is a simple language that is currently layered on, but can
+FlatJS is a simple language that is currently layered on, but can
 eventually be embedded in, Javascript.
 
-The purpose of Parlang is to allow JS programs to use shared memory
-somewhat conveniently and with high performance by layering structured
-types onto shared memory.
+The purpose of FlatJS is to allow JS programs to use ArrayBuffer and
+SharedArrayBuffer memory somewhat conveniently and with high
+performance by layering structured types onto flat memory.
 
-Reference types (classes with single inheritance, and arrays) and
-value types (structures) are supported, with named and typed fields
-and some simple method facilities.  Methods on classes are virtual.
-Macros sweeten the syntax further.
+In addition to primitive value types (int8, etc), FlatJS has compound
+reference types (classes with single inheritance) and value types
+(structures) with named and typed fields and some simple method
+facilities.  There are also arrays of all those types.  Methods on
+classes are currently always virtual.  Macros sweeten the syntax
+further.
 
-Objects in shared memory are represented in JS by their pointer
-values, ie, as integer byte offsets into a single shared heap.  That
-is a weak representation, but it is (much) more performant than
-allocating and managing front objects, and right now performance is
-the main focus of this exercise.
+Objects in flat memory are represented in JS by their pointer values,
+ie, as integer byte offsets into a single heap.  That is a weak
+representation, but it is more performant than allocating and managing
+front objects, and right now performance is the main focus of this
+exercise.
 
 Also for performance reasons the language is fairly static and is
 implemented by means of a rewriter that performs extensive in-line
 expansion.  There are few dynamic features beyond virtual methods on
-shared-class instances.  All memory management is manual, a la C++.
-All fields in shared memory are statically typed.
+FlatJS class instances.  All memory management is manual.
 
 For ease of processing *only*, the syntax is currently line-oriented:
 Line breaks are explicit in the grammars below and some "@" characters
@@ -34,9 +35,8 @@ appear here and there to make recognition easier.  Please don't get
 hung up on this, it's just a matter of programming to fix it but this
 is not my focus right now.
 
-The following is the bare specification.  See example.txt for worked
-examples, and demo/ for larger examples.  See a later section, TODO,
-for a run-down of missing but desirable features.
+The following is the bare specification.  Full programs are in test/
+and demo/.
 
 
 ## Primitive types
@@ -58,7 +58,7 @@ identity) with named, mutable fields.
 
 ```
   Struct-def ::= (lookbehind EOL)
-                 "@shared" "struct" Id "{" Comment? EOL
+                 "@flatjs" "struct" Id "{" Comment? EOL
                  ((Comment | Field) EOL)*
                  ((Comment | Struct-Method) EOL)*
 		 "}" "@end" Comment? EOL
@@ -67,17 +67,17 @@ identity) with named, mutable fields.
 
   Comment ::= "//" Not-EOL*
 
-  Type ::= AtomicType | ValType
+  Type ::= AtomicType | ValType | ArrayType
   AtomicType ::= ("atomic" | "synchronic")? ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32")
   ValType ::= ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32")
             | "float32"
 	    | "float64"
             | Id
-            | array(ValType)
+  ArrayType ::= array(ValType)
 
-  Struct-Method ::= "@get" "(" "self" ")" Function-body
-                  | "@set" "(" "self" ("," Parameter)* ("," "..." Id)? ")" Function-body
-                  | "@copy" "(" "self", Parameter ")" Function-body
+  Struct-Method ::= "@get" "(" "SELF" ")" Function-body
+                  | "@set" "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
+                  | "@copy" "(" "SELF", Parameter ")" Function-body
 
   Parameter ::= Id (":" Tokens-except-comma-or-rightparen )?
 
@@ -85,20 +85,20 @@ identity) with named, mutable fields.
 ```
 
 NOTE: Underscore is not a legal character in an Id.  That is because
-the underscore is used as part of the macro syntax.  It's possible to
-lift this restriction.
+      the underscore is used as part of the macro syntax.
 
-NOTE: The annotation on the Parameter is not used by Parlang, but is
-allowed in order to interoperate with TypeScript.
+NOTE: The annotation on the Parameter is not used by FlatJS, but is
+      allowed in order to interoperate with TypeScript.
 
 NOTE: The restriction of properties before methods is a matter of
-economizing on the markup; as it is, properties don't need eg "@var"
-before them.
+      economizing on the markup; as it is, properties don't need eg
+      "@var" before them.  This restriction can be lifted once we have
+      a real parser.
 
 
 ### Static semantics
 
-There is a program-wide namespace for shared types; the Id naming
+There is a program-wide namespace for FlatJS types; the Id naming
 the struct must be unique within that namespace.
 
 A named field type must be defined somewhere in the set of translation
@@ -110,9 +110,11 @@ chain of struct-typed fields.
 Every field name must be unique within the struct.
 
 Within the bodies of @get, @set, and @copy, 'this' has an undetermined
-binding (for now) and should not be referenced.  [That will be nailed
-down and will either be the global object, or the object representing
-the type being defined.]
+binding (for now) and should not be referenced.
+
+NOTE: The meaning of 'this' will be nailed down and will either be the
+      global object, or the object representing the type being
+      defined.
 
 
 ### Translation
@@ -124,8 +126,7 @@ hold an instance of R.
 
 #### Global value properties
 
-R is a global "var" holding an object designating the type.  [More
-ideally a const with non-configurable properties.]
+R is a global "const" holding an object designating the type.
 
 R.SIZE is the size in bytes of R, rounded up such that an array of R
 structures can be traversed by adding R.SIZE to a pointer to one
@@ -133,6 +134,8 @@ element of the array to get to the next element, and allocating
 n*R.SIZE will allocate space enough to hold n such elements.
 
 R.ALIGN is the required alignment for R, in bytes.
+
+R.NAME is the name of the type R.
 
 
 #### Global function properties
@@ -143,9 +146,9 @@ are defined:
 * R.Fk(self) => value of self.Fk field
 * R.set_Fk(self, v) => void; set value of self.Fk field to v
 
-If a field Fk does not have struct type and is designated "atomic" then
-the getter and setter just shown use atomic loads and stores.  In
-addition, the following atomic functions are defined:
+If a field Fk is designated "atomic" then the getter and setter just
+shown use atomic loads and stores.  In addition, the following atomic
+functions are defined:
   
 * R.compareExchange_Fk(self, o, n) => if the value of self.Fk field is o then store n; return old value
 * R.add_Fk(self, v) => add v to value of self.Fk field; return old value
@@ -154,10 +157,9 @@ addition, the following atomic functions are defined:
 * R.or_Fk(self, v) => or v into value of self.Fk field; return old value
 * R.xor_Fk(self, v) => xor v to value of self.Fk field; return old value
 
-If a field Fk does not have struct type and is designated "synchronic"
-then the setter and atomics just shown are synchronic-aware (every
-update performs a notification).  In addition, the following
-synchronic functions are defined:
+If a field Fk is designated "synchronic" then the setter and atomics
+just shown are synchronic-aware (every update sends a notification).
+In addition, the following synchronic functions are defined:
 
 * R.expectUpdate_Fk(self, v, t) => void; wait until the value of the self.Fk field is observed not to hold v, or until t milliseconds have passed
 * R.loadWhenEqual_Fk(self, v) => wait until the value of the self.Fk field is observed to hold v, then return the value of that field (which might have changed since it was observed to hold v)
@@ -190,11 +192,12 @@ is a class instance address.
 
 ```
   Class-def ::= (lookbehind EOL)
-                "@shared" "class" Id ("extends" Id)? "{" Comment? EOL
-                ((Comment | Field | Class-Method) EOL)*
+                "@flatjs" "class" Id ("extends" Id)? "{" Comment? EOL
+                ((Comment | Field) EOL)*
+                ((Comment | Class-Method) EOL)*
 		"}" "@end" Comment? EOL
 
-  Class-method ::= "@method" Id "(" "self" ("," Parameter)* ("," "..." Id)? ")" Function-body
+  Class-method ::= "@method" Id "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
 ```
 
 ### Static semantics
@@ -226,7 +229,9 @@ subtype, for purposes of layout.
   
 * R.SIZE as for structs.
 * R.ALIGN as for structs.
+* R.NAME as for structs.
 * R.CLSID for the type ID for the type.
+* R.BASE for the base type of R, or null.
 
 Field getters/setters are translated as for structs.
   
@@ -251,7 +256,7 @@ NOTE: _impl method and how to invoke on super
 
 ## Array types
 
-Parlang arrays are primitive reference types that do /not/ carry their
+FlatJS arrays are primitive reference types that do /not/ carry their
 length: they are simply a sequence of elements of a given type within
 memory.
 
@@ -267,46 +272,60 @@ These accessors are macro-expanded, as for named field accessors.
 ## @new macro
 
 An instance of the class type may be allocated and initialized with
-the operator-like @new macro.  Specifically, @new T for shared class
+the operator-like @new macro.  Specifically, @new T for FlatJS class
 type T expands into this:
 
-  T.initInstance(Parlang.alloc(T.SIZE, T.ALIGN))
+  T.initInstance(FlatJS.alloc(T.SIZE, T.ALIGN))
 
-ALSO: @new array(T)
+An array of values may also be allocated and initialized with @new.
+Specifically, @new array(T,n) for FlatJS value type T expands into
+this:
+
+  FlatJS.alloc(n*<size>, <align>)
+
+where <size> is the size of an int32 if T is a reference type or the
+size of the value type T otherwise, and <align> is 4 if T is a
+reference type and the alignment of value type T otherwise.
 
 
 ## SELF accessor macros
 
 Inside the method for a struct or class R with a suite of accessor
 methods M1..Mn, there will be defined non-hygienic macros
-SELF_M1..SELF_Mk.  A reference to SELF_Mj(arg,...) is rewritten
-as a reference to R.Mj(self, arg, ...).
+SELF.M1..SELF.Mk.  A reference to SELF.Mj(arg,...) is rewritten
+as a reference to R.Mj(SELF, arg, ...).
 
 In the special case of a field getter Mg, which takes only the self
-argument, the form of the macro invocation shall be SELF_Mg, that
+argument, the form of the macro invocation shall be SELF.Mg, that
 is, without the empty parameter list.
 
 
 ## Environment
 
-There is a new global object called "Parlang".  This is defined in
-parlang.js, which must be loaded before the application files.
+There is a new global object called "FlatJS".  This is defined in
+libflatjs.js, which must be loaded once before the application files.
 
 For each primitive type (int8, uint8, int16, uint16, int32, uint32,
-float32, float64) there is a property on the Parlang object with the
-type name containing the following properties:
+float32, float64) there is a global variable with the type name
+containing the following properties:
 
 * SIZE is the size in bytes of the type
 * ALIGN is the required alignment in bytes of the type
+* NAME is the name of thetype
 
-The Parlang object has the following methods:
+There is a global variable called NULL whose value is the null
+pointer, whose integer value is zero.
 
-* init(sab [, initialize]) takes a SharedArrayBuffer and installs it as the global heap.  If initialize=true then the shared memory is also appropriately initialized.  initialize must be true in the first call to init() the call that performs initialization must return before any other calls to init() are made.  [Normally this means you init(...,true) on the main thread before you send sab to the workers.]
+The FlatJS object has the following methods:
+
+* init(sab [, initialize]) takes an ArrayBuffer or SharedArrayBuffer and installs it as the global heap.  If initialize=true then the memory is also appropriately initialized.  initialize must be true in the first call to init() the call that performs initialization must return before any other calls to init() are made.  [Normally this means you init(...,true) on the main thread before you send sab to the workers.]
 * alloc(numBytes, byteAlignment) allocates an object of size numBytes with alignment at least byteAlignment and returns it.  If the allocation fails then an exception is thrown.  This never returns 0.
 * calloc(numBytes, byteAlignment) is like alloc, but zero-initializes the memory.
 * free(p) frees an object p that was obtained from alloc(), or does nothing if p is 0.
+* identify(p) returns the Class object if p is a pointer to a class instance, or null.
 
-The allocator operates on the shared memory and is thread-safe.
+The allocator operates on the flat memory and is thread-safe if that
+memory is shared.
 
 
 ## How to run the translator
@@ -353,39 +372,3 @@ Struct types and class types are separate because class types need
 different initialization (vtable, chiefly).  By keeping these
 separate, it becomes sensible to always give a class type a vtable and
 never pay for that in a struct.
-
-
-## TODO
-
-These are ideas it would be nice to support:
-
-v1:
-* Name change to flatjs [Simple] [Also library file, docn, examples, comments, file extensions, etc]
-* Clearly SELF method calls would be a winner (with required parens even if
-  the number of args falls to zero) [A little work]
-
-Desirable for v1, but must investigate:
-* It would be useful to distinguish between '@method' and '@virtual', possibly.
-* SIMD primitive types (non-atomic): float32x4, int32x4, others?
-* Some sort of macro for SELF_x = expr would be lovely, to avoid SELF_set_x(expr),
-  but is it syntactically more risky?  Things are already risky.
-
-Later:
-* More assignment operators: support +=, etc, and deal with atomics/synchronics
-* Clearly at least private properties would be helpful: "private x : int32"
-* No particularly good reason why struct types can't inherit
-* No particularly good reason why struct types can't have non-virtual methods
-* In-line fixed-length array types, these are effectively unnamed struct
-  types, eg, xs: array(int32,10)
-* String types, maybe?  Easy enough to define a SharedString class that
-  references an underlying array, probably.  Doing so would get into
-  interesting territory about sharing and refcounting and assignment, maybe.
-* Instead of T.ref_fld(self) we could operate with T.offset_fld as a constant, if it matters
-* Each type object could contain a map of its names to offsets within the struct
-* Once you have a macro processor that replaces instances of TypeName.propname with
-  anything else, it's a short slide down the slippery slope to add enums and
-  compile-time constants (which would be necessary for in-line arrays
-  with symbolically defined lengths, "@flatjs const x = 10").  Sliding further,
-  constant expressions.
-* ES7 might use the '@' character for annotations, maybe consider something else?
-* Proper parser, to deal with a lot of syntactic footguns

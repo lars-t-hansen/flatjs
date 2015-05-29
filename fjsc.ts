@@ -8,14 +8,14 @@
 
 /*
  * Usage:
- *   parlang input-file ...
+ *   fjsc input-file ...
  *
  * One output file will be produced for each input file.  Each input
- * file must have extension .xx.parlang, where x is typically js or
- * ts.  On output the .parlang suffix will be stripped.
+ * file must have extension .xx.flatjs, where x is typically js or
+ * ts.  On output the .flatjs suffix will be stripped.
  *
  * To compile:
- *   tsc -t ES5 -m commonjs parlang.ts
+ *   tsc -t ES5 -m commonjs fjsc.ts
  *
  * An alternative to the ad-hoc and brittle macro expansion at some of
  * the later stages here is to emit macro definitions for sweet.js and
@@ -218,9 +218,9 @@ var allDefs:[UserDefn[],string[]][] = [];
 
 function main(args: string[]) {
     for ( let input_file of args ) {
-	if (input_file.length < 11 ||
-	    (input_file.slice(-11) != ".js.parlang" && input_file.slice(-11) != ".ts.parlang"))
-	    throw new Error("Bad file name (must be .js.parlang or .ts.parlang): " + input_file);
+	if (input_file.length < 10 ||
+	    (input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
+	    throw new Error("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
 	let text = fs.readFileSync(input_file, "utf8");
 	let lines = text.split("\n");
 	allDefs.push(collectDefinitions(input_file, lines));
@@ -236,7 +236,7 @@ function main(args: string[]) {
     expandGlobalAccessorsAndMacros();
 
     for ( let i=0 ; i < args.length ; i++ ) {
-	let output_file = args[i].replace(/\.parlang$/,"");
+	let output_file = args[i].replace(/\.flatjs$/,"");
 	let text = allDefs[i][1].join("\n")
 	fs.writeFileSync(output_file, text, "utf8");
     }
