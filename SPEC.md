@@ -61,7 +61,7 @@ identity) with named, mutable fields.
                  "@flatjs" "struct" Id "{" Comment? EOL
                  ((Comment | Field) EOL)*
                  ((Comment | Struct-Method) EOL)*
-		 "}" "@end" Comment? EOL
+                 "}" "@end" Comment? EOL
 
   Field ::= Ident ":" Type ";"? Comment? EOL
 
@@ -71,7 +71,7 @@ identity) with named, mutable fields.
   AtomicType ::= ("atomic" | "synchronic")? ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32")
   ValType ::= ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32")
             | "float32"
-	    | "float64"
+            | "float64"
             | Id
   ArrayType ::= array(ValType)
 
@@ -195,7 +195,7 @@ is a class instance address.
                 "@flatjs" "class" Id ("extends" Id)? "{" Comment? EOL
                 ((Comment | Field) EOL)*
                 ((Comment | Class-Method) EOL)*
-		"}" "@end" Comment? EOL
+                "}" "@end" Comment? EOL
 
   Class-method ::= "@method" Id "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
 ```
@@ -242,9 +242,9 @@ of K, or not), turns into this global function:
 ```
     function O_meth(self, arg, ...) {
         switch (_mem_i32[self>>2]) {
-	case J_ID: return J_meth_impl(self, arg, ...); 
-	default:   return O_meth_impl(self, arg, ...);
-	}
+        case J_ID: return J_meth_impl(self, arg, ...); 
+        default:   return O_meth_impl(self, arg, ...);
+        }
     }
 ```
 
@@ -336,12 +336,12 @@ normally output a file for each input file.
 
 
 *** WARNING The translator is currently implemented by means of a
-    	    fairly crude regular expression matcher.  Occasionally
-    	    this leads to problems.
+            fairly crude regular expression matcher.  Occasionally
+            this leads to problems.
 
             * Do not use expressions containing commas or parentheses
-    	    in the arguments to accessor macros (including array
-    	    accessors).
+            in the arguments to accessor macros (including array
+            accessors).
 
             * Do not split calls to accessor macros across multiple
             lines.

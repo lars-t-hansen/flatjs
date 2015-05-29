@@ -1,23 +1,13 @@
 Immediate things to do:
 
-* Make spec.txt catch up with implementation, and rename as spec.md
-* Flesh out README.md a little, link to spec
 * More test cases
 * Test on ray tracer
-* Get rid of the rest arguments in virtual calls
-* Atomics + synchronics
-* File issues for or fix FIXME / TODO comments in the code
-
-
-
-
-## TODO
 
 These are ideas it would be nice to support:
 
 v1:
-* Clearly SELF method calls would be a winner (with required parens even if
-  the number of args falls to zero) [A little work]
+* Issue #4: Clearly SELF method calls would be a winner (with required
+  parens even if the number of args falls to zero)
 
 Desirable for v1, but must investigate:
 * It would be useful to distinguish between '@method' and '@virtual', possibly.
@@ -35,6 +25,7 @@ Later:
 * String types, maybe?  Easy enough to define a SharedString class that
   references an underlying array, probably.  Doing so would get into
   interesting territory about sharing and refcounting and assignment, maybe.
+* Nested array types
 * Instead of T.ref_fld(self) we could operate with T.offset_fld as a constant, if it matters
 * Each type object could contain a map of its names to offsets within the struct
 * Once you have a macro processor that replaces instances of TypeName.propname with

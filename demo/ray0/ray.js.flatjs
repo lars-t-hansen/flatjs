@@ -3,6 +3,11 @@
 //
 // lth@acm.org / lhansen@mozilla.com, winter 2012 and later.
 
+// Global parameters
+
+const height = 600;
+const width = 800;
+
 // FlatJS setup.
 
 const RAW_MEMORY = new SharedArrayBuffer(height*width*4 + 65536);
@@ -245,9 +250,6 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	int32.array_set(SELF.data, (SELF.height-y)*SELF.width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
     }
 } @end
-
-const height = 600;
-const width = 800;
 
 const g_left = -2;
 const g_right = 2;

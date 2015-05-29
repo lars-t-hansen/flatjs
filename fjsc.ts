@@ -721,7 +721,7 @@ function pasteupTypes():void {
 
 	    // Now do vtable, if appropriate.
 
-	    // TODO: instead of using ...args we really must use a
+	    // Issue 2: instead of using ...args we really must use a
 	    // signature from one of the method defs, but it's tricky
 	    // since we may have to strip annotations, and there's
 	    // also a question about rest arguments.  (Not to mention
@@ -822,9 +822,8 @@ class ParamParser {
 	    return null;
 	var depth = 0;
 	var start = this.pos;
-	// TODO: Really should outlaw regular expressions, but much harder, and somewhat marginal
-	// TODO: Really should handle /* .. */ comments
-	// TODO: Check that parens and braces nest properly
+	// Issue 8: Really should handle regular expressions, but much harder, and somewhat marginal
+	// Issue 7: Really should handle /* .. */ comments
 	while (this.pos < this.lim) {
 	    switch (this.input.charAt(this.pos++)) {
 	    case ',':
@@ -849,7 +848,7 @@ class ParamParser {
 		break;
 	    case '\'':
 	    case '"':
-		// FIXME: implement this
+		// Issue 5: implement this
 		throw new Error("Internal error: Avoid strings in arguments for now");
 	    }
 	}
@@ -884,9 +883,7 @@ function accMacro(s, p, ms) {
     var nomatch = [s, p+m.length];
     var left = s.substring(0,p);
 
-    // FIXME: atomics, synchronics and all operations on them
-    // Atomics should be expanded inline.
-    // Synchronics should indirect through methods on FlatJS, probably.
+    // Issue 3: atomics, synchronics and all operations on them
 
     if (!operation)
 	operation = "get_";
@@ -897,7 +894,7 @@ function accMacro(s, p, ms) {
     if (!fld)
 	return nomatch;
 
-    // TODO: Emit warnings for arity abuse, at a minimum.
+    // Issue 6: Emit warnings for arity abuse, at a minimum.
 
     var pp = new ParamParser(s, p+m.length);
     var as = (pp).allArgs();
@@ -938,7 +935,7 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
 		    left.length + expr.length];
 	}
 	default:
-	    return nomatch;		// Warning desired
+	    return nomatch;		// Issue 6: Warning desired
 	}
     }
     else {
@@ -950,20 +947,20 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
 	switch (operation) {
 	case "get_": {
 	    if (!t.hasGetMethod)
-		return nomatch;	// Warning desired
+		return nomatch;	// Issue 6: Warning desired
 	    var expr = "(" + t.name + "._get_impl(" + ref + "))";
 	    return [left + expr + s.substring(pp.where),
 		    left.length + expr.length];
 	}
 	case "set_": {
 	    if (!t.hasSetMethod)
-		return nomatch;	// Warning desired
+		return nomatch;	// Issue 6: Warning desired
 	    var expr = "(" + t.name + "._set_impl(" + ref + "," + expandMacrosIn(endstrip(rhs)) + "))";
 	    return [left + expr + s.substring(pp.where),
 		    left.length + expr.length];
 	}
 	default:
-	    return nomatch;	// Warning desired
+	    return nomatch;	// Issue 6: Warning desired
 	}
     }
 }
@@ -988,7 +985,7 @@ function arrMacro(s, p, ms) {
     var pp = new ParamParser(s, p+m.length);
     var as = (pp).allArgs();
 
-    // TODO: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
+    // Issue 6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
 
     switch (operation) {
     case "get": if (as.length != 2) return nomatch; operation = "get_"; break;
