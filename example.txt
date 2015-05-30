@@ -1,7 +1,5 @@
-// This assumes a few things:
+// This assumes a few things that don't exist:
 //
-//   @flatjs instead of @shared
-//   SELF. instead of SELF_
 //   SELF method calls
 //   Macro expansion of SELF.prop = expr and SELF.prop += expr
 //    (and note the chained one in init)
