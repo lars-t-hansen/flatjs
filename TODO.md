@@ -2,22 +2,14 @@ Immediate things to do:
 
 * More test cases
 * Test on ray tracer
+* v1 targeted issues
 
-These are ideas it would be nice to support:
+Language ideas to investigate, not yet Issue-worthy:
 
-v1:
-* Issue #4: Clearly SELF method calls would be a winner (with required
-  parens even if the number of args falls to zero)
-
-Desirable for v1, but must investigate:
-* It would be useful to distinguish between '@method' and '@virtual', possibly.
 * SIMD primitive types (non-atomic): float32x4, int32x4, others?
-* Some sort of macro for SELF_x = expr would be lovely, to avoid SELF_set_x(expr),
-  but is it syntactically more risky?  Things are already risky.
-
-Later:
-* More assignment operators: support +=, etc, and deal with atomics/synchronics
+* It would be useful to distinguish between '@method' and '@virtual', possibly.
 * Clearly at least private properties would be helpful: "private x : int32"
+* Clearly final classes might be helpful (for devirtualization, if nothing else)
 * No particularly good reason why struct types can't inherit
 * No particularly good reason why struct types can't have non-virtual methods
 * In-line fixed-length array types, these are effectively unnamed struct
@@ -34,4 +26,3 @@ Later:
   with symbolically defined lengths, "@flatjs const x = 10").  Sliding further,
   constant expressions.
 * ES7 might use the '@' character for annotations, maybe consider something else?
-* Proper parser, to deal with a lot of syntactic footguns
