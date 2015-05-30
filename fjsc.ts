@@ -1,25 +1,27 @@
 /* -*- mode: javascript -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-// This is source code for TypeScript 1.5 and node.js 0.10 / ECMAScript 5.
-// Tested with tsc 1.5.0-beta and nodejs 0.10.25.
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ *
+ * Author: Lars T Hansen, lth@acm.org.
+ */
 
 /*
+ * FlatJS compiler.  Desugars FlatJS syntax in JavaScript programs.
+ *
  * Usage:
  *   fjsc input-file ...
  *
  * One output file will be produced for each input file.  Each input
- * file must have extension .xx.flatjs, where x is typically js or
- * ts.  On output the .flatjs suffix will be stripped.
+ * file must have extension .xx.flatjs, where x is "js" or "ts".  On
+ * output the .flatjs suffix will be stripped.
+ *
+ *
+ * This is source code for TypeScript 1.5 and node.js 0.10 / ECMAScript 5.
+ * Tested with tsc 1.5.0-beta and nodejs 0.10.25.
  *
  * To compile:
  *   tsc -t ES5 -m commonjs fjsc.ts
- *
- * An alternative to the ad-hoc and brittle macro expansion at some of
- * the later stages here is to emit macro definitions for sweet.js and
- * postprocess the output with that.
  */
 
 /// <reference path='typings/node/node.d.ts' />

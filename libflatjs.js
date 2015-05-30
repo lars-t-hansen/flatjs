@@ -1,12 +1,16 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ *
+ * Author: Lars T Hansen, lth@acm.org.
+ */
 
 /* libflatjs.js - load this before loading your compiled FlatJS program.
  *
  * Call FlatJS.init before using, see documentation below.
  */
 
+/*
 if (typeof "SharedArrayBuffer" == "undefined") {
     SharedArrayBuffer = ArrayBuffer;
     SharedInt8Array = Int8Array;
@@ -18,6 +22,7 @@ if (typeof "SharedArrayBuffer" == "undefined") {
     SharedFloat32Array = Float32Array;
     SharedFloat64Array = Float64Array;
 }
+*/
 
 if (typeof "Atomics" == "undefined") {
     Atomics = { load: function (a,n) { return a[n]; },
