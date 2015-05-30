@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// This is source code for TypeScript 1.5 and node.js 0.10.
+// This is source code for TypeScript 1.5 and node.js 0.10 / ECMAScript 5.
 // Tested with tsc 1.5.0-beta and nodejs 0.10.25.
 
 /*
@@ -78,7 +78,7 @@ class ClassDefn extends UserDefn {
     className = "";		// Base1>Base2>name
     classId = 0;
     subclasses: ClassDefn[] = []; // direct proper subclasses
-    vtable = null;		  // FIXME: type!
+    vtable:Virtual[] = null;
 
     constructor(file:string, line:number, name:string, public baseName:string, props:Prop[], methods:Method[], origin:number) {
 	super(file, line, name, DefnKind.Class, props, methods, origin);
@@ -92,10 +92,14 @@ class ClassDefn extends UserDefn {
     }
 }
 
+class Virtual {
+    constructor(public name:string, public reverseCases: SMap<number[]>, public default_:string) {}
+}
+
 class VirtualMethodNameIterator {
     private i = 0;
     private inherited = false;
-    private filter = {};
+    private filter = {};	// FIXME: string set
 
     constructor(private cls:ClassDefn) {}
 
@@ -123,7 +127,7 @@ class VirtualMethodNameIterator {
 }
 
 class InclusiveSubclassIterator {
-    private stack = [];
+    private stack = [];		// FIXME: type?
 
     constructor(cls:ClassDefn) {
 	this.stack.push(cls);
@@ -207,17 +211,16 @@ class MapEntry {
 	return this.type.size;
     }
 
-    toString() {
+    toString():string {
 	return "(" + this.name + " " + this.expand + " " + this.offset + " " + this.type.name + ")";
     }
 }
 
-
-// Simple map.  Allows properties to be added and updated, but not to
-// be removed.
+// Simple map from string to T.  Allows properties to be added and
+// updated, but not to be removed.
 
 class SMap<T> {
-    private props: T[] = [];	// Array of values
+    private props: {name:string, value:T}[] = [];
     private mapping = {};	// Map from name to index
     private generation = 0;	// Incremented on update (but not on add)
 
@@ -228,19 +231,19 @@ class SMap<T> {
     get(n:string):T {
 	let probe = this.mapping[n];
 	if (typeof probe == "number")
-	    return this.props[probe];
+	    return this.props[probe].value;
 	return null;
     }
 
     put(n:string, v:T):void {
 	let probe = this.mapping[n];
 	if (typeof probe == "number") {
-	    this.props[probe] = v;
+	    this.props[probe].value = v;
 	    this.generation++;
 	}
 	else {
 	    this.mapping[n] = this.props.length;
-	    this.props.push(v);
+	    this.props.push({name:n, value:v});
 	}
     }
 
@@ -253,7 +256,7 @@ class SMap<T> {
 	return newMap;
     }
 
-    iterator(): { next: () => T } {
+    values(): { next: () => T } {
 	const theMap = this;
 	const generation = this.generation;
 	const props = this.props;
@@ -264,7 +267,23 @@ class SMap<T> {
 			 throw new Error("Generator invalidated by assignment");
 		     if (i == props.length)
 			 return null;
-		     return props[i++];
+		     return props[i++].value;
+		 } };
+    }
+
+    keysValues(): { next: () => [string,T] } {
+	const theMap = this;
+	const generation = this.generation;
+	const props = this.props;
+	let i = 0;
+	return { next:
+		 function (): [string,T] {
+		     if (theMap.generation != generation)
+			 throw new Error("Generator invalidated by assignment");
+		     if (i == props.length)
+			 return [null,null];
+		     let x = props[i++];
+		     return [x.name,x.value];
 		 } };
     }
 }
@@ -289,7 +308,7 @@ class Source {
 
 const allSources:Source[] = [];
 
-function main(args: string[]) {
+function main(args: string[]):void {
     for ( let input_file of args ) {
 	if (input_file.length < 10 ||
 	    (input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
@@ -363,7 +382,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	let properties:Prop[] = [];
 	let methods:Method[] = [];
 	let in_method = false;
-	let mbody = null;
+	let mbody:string[] = null;
 	let method_type = MethodKind.Virtual;
 	let method_name = "";
 
@@ -433,7 +452,7 @@ const knownTypes = new SMap<Defn>();
 const knownIds = {};		// FIXME: This is a set of integers, clean it up
 const userTypes:UserDefn[] = [];
 
-function buildTypeMap() {
+function buildTypeMap():void {
     knownTypes.put("int8", new PrimitiveDefn("int8", 1, true));
     knownTypes.put("uint8", new PrimitiveDefn("uint8", 1, true));
     knownTypes.put("int16", new PrimitiveDefn("int16", 2, true));
@@ -535,10 +554,6 @@ function layoutTypes():void {
 	    layoutClass(<ClassDefn> d);
 	else
 	    layoutStruct(<StructDefn> d);
-	//console.log(d.map);
-	//var it = d.map.iterator();
-	//for ( var x=it.next() ; x ; x=it.next() )
-	//    console.log(x);
     }
 }
 
@@ -596,7 +611,7 @@ function layoutDefn(d:UserDefn, map:SMap<MapEntry>, size:number, align:number):v
 	    align = Math.max(align, st.align);
 	    map.put(p.name, new MapEntry(p.name, false, size, st));
 	    let root = p.name;
-	    let mIter = st.map.iterator();
+	    let mIter = st.map.values();
 	    for ( let fld=mIter.next() ; fld ; fld=mIter.next() ) {
 		let fldname = root + "_" + fld.name;
 		map.put(fldname, new MapEntry(fldname, fld.expand, size + fld.offset, fld.type));
@@ -665,28 +680,28 @@ function createVirtuals():void {
 */
 
 function createVirtualsFor(cls: ClassDefn): void {
-    let vtable = [];
+    let vtable:Virtual[] = [];
     let mnames = new VirtualMethodNameIterator(cls);
     for ( let [mname, isInherited] = mnames.next() ; mname != "" ; [mname, isInherited] = mnames.next() ) {
-	let reverseCases = {};
+	let reverseCases = new SMap<number[]>();
 	let subs = new InclusiveSubclassIterator(cls);
 	for ( let subcls = subs.next() ; subcls ; subcls = subs.next() ) {
 	    let impl = findMethodImplFor(subcls, cls.baseTypeRef, mname);
 	    if (!impl)
 		continue;
-	    if (!reverseCases.hasOwnProperty(impl))
-		reverseCases[impl] = [];
-	    reverseCases[impl].push(subcls.classId);
+	    if (!reverseCases.test(impl))
+		reverseCases.put(impl, []);
+	    reverseCases.get(impl).push(subcls.classId);
 	}
-	let def = null;
+	let def:string = null;
 	if (isInherited && cls.baseTypeRef)
 	    def = findMethodImplFor(cls.baseTypeRef, null, mname);
-	vtable.push({ name: mname, reverseCases: reverseCases, default_: def });
+	vtable.push(new Virtual(mname, reverseCases, def));
     }
     cls.vtable = vtable;
 }
 
-function findMethodImplFor(cls, stopAt, name) {
+function findMethodImplFor(cls:ClassDefn, stopAt:ClassDefn, name:string):string {
     if (cls == stopAt)
 	return null;
     if (cls.hasMethod(name))
@@ -726,7 +741,7 @@ function pasteupTypes():void {
     for ( let source of allSources ) {
 	let defs = source.defs;
 	let lines = source.lines;
-	let nlines = [];
+	let nlines: string[] = [];
 	let k = 0;
 	for ( let d of defs ) {
 	    while (k < d.origin && k < lines.length)
@@ -790,13 +805,11 @@ function pasteupTypes():void {
 		for ( let virtual of cls.vtable ) {
 		    nlines.push(virtual.name + ": function (SELF, ...args) {");
 		    nlines.push("  switch (_mem_int32[SELF>>2]) {");
-		    let rev = virtual.reverseCases;
-		    for ( let revname in rev ) {
-			if (rev.hasOwnProperty(revname)) {
-			    for ( let r of rev[revname] )
-				nlines.push("    case " + r + ": ");
-			    nlines.push("      return " + revname + "(SELF, ...args);");
-			}
+		    let kv = virtual.reverseCases.keysValues();
+		    for ( let [name,cases]=kv.next() ; name ; [name,cases]=kv.next() ) {
+			for ( let c of cases )
+			    nlines.push("    case " + c + ": ");
+			nlines.push("      return " + name + "(SELF, ...args);");
 		    }
 		    nlines.push("    default:");
 		    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(SELF, ...args)") : "throw new Error('Bad type')") + ";");
@@ -825,7 +838,7 @@ function pasteupTypes():void {
 function expandGlobalAccessorsAndMacros():void {
     for ( let source of allSources ) {
 	let lines = source.lines;
-	let nlines = [];
+	let nlines: string[] = [];
 	for ( let j=0 ; j < lines.length ; j++ )
 	    nlines.push(expandMacrosIn(lines[j]))
 	source.lines = nlines;
@@ -836,11 +849,11 @@ const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(set_|ref_)?([a-zA-Z0-9_]+)\s*\(/g;
 const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
 const new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
 
-function expandMacrosIn(text) {
+function expandMacrosIn(text:string):string {
     return myExec(new_re, newMacro, myExec(arr_re, arrMacro, myExec(acc_re, accMacro, text)));
 }
 
-function myExec(re, macro, text) {
+function myExec(re:RegExp, macro:(string, number, RegExpExecArray)=>[string,number], text:string):string {
     let old = re.lastIndex;
     re.lastIndex = 0;
 
@@ -909,7 +922,7 @@ class ParamParser {
 
     allArgs():string[] {
 	let as:string[] = [];
-	let a;
+	let a:string;
 	while (a = this.nextArg())
 	    as.push(a);
 	return as;
@@ -927,24 +940,24 @@ function cleanupArg(s:string):string {
     return s;
 }
 
-function accMacro(s, p, ms) {
-    var m = ms[0];
-    var className = ms[1];
-    var operation = ms[2];
-    var propName = ms[3];
+function accMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
+    let m = ms[0];
+    let className = ms[1];
+    let operation = ms[2];
+    let propName = ms[3];
 
-    var nomatch = [s, p+m.length];
-    var left = s.substring(0,p);
+    let nomatch:[string,number] = [s, p+m.length];
+    let left = s.substring(0,p);
 
     // Issue 3: atomics, synchronics and all operations on them
 
     if (!operation)
 	operation = "get_";
-    var ty = knownTypes.get(className);
+    let ty = knownTypes.get(className);
     if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
 	return nomatch;
-    var cls = <UserDefn> ty;
-    var fld = cls.findAccessibleFieldFor(operation, propName);
+    let cls = <UserDefn> ty;
+    let fld = cls.findAccessibleFieldFor(operation, propName);
     if (!fld) {
 	//console.log("No match for " + className + "  " + operation + "  " + propName);
 	return nomatch;
@@ -952,14 +965,14 @@ function accMacro(s, p, ms) {
 
     // Issue 6: Emit warnings for arity abuse, at a minimum.
 
-    var pp = new ParamParser(s, p+m.length);
-    var as = (pp).allArgs();
+    let pp = new ParamParser(s, p+m.length);
+    let as = (pp).allArgs();
     switch (operation) {
     case "get_": if (as.length != 1) { console.log("Bad get arity " + propName + " " + as.length); return nomatch; }; break;
     case "set_": if (as.length != 2) { console.log("Bad set arity " + propName + " " + as.length); return nomatch; }; break;
     }
 
-    var ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + fld.offset + ")";
+    let ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + fld.offset + ")";
     if (operation == "ref_") {
 	return [left + ref + s.substring(pp.where),
 		left.length + ref.length];
@@ -968,8 +981,8 @@ function accMacro(s, p, ms) {
     return loadFromRef(ref, fld.type, s, left, operation, pp, as[1], nomatch);
 }
 
-function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
-    var mem="", size=0;
+function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:string, pp:ParamParser, rhs:string, nomatch:[string,number]):[string,number] {
+    let mem="", size=0;
     if (type.kind == DefnKind.Primitive) {
 	mem = (<PrimitiveDefn> type).memory;
 	size = type.size;
@@ -981,12 +994,12 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
     if (size > 0) {
 	switch (operation) {
 	case "get_": {
-	    var expr = "(" + mem + "[" + ref + ">>" + log2(size) + "])";
+	    let expr = "(" + mem + "[" + ref + ">>" + log2(size) + "])";
 	    return [left + expr + s.substring(pp.where),
 		    left.length + expr.length];
 	}
 	case "set_": {
-	    var expr = "(" + mem + "[" + ref + ">>" + log2(size) + "] = " + expandMacrosIn(endstrip(rhs)) + ")";
+	    let expr = "(" + mem + "[" + ref + ">>" + log2(size) + "] = " + expandMacrosIn(endstrip(rhs)) + ")";
 	    return [left + expr + s.substring(pp.where),
 		    left.length + expr.length];
 	}
@@ -995,7 +1008,7 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
 	}
     }
     else {
-	var t = <StructDefn> type;
+	let t = <StructDefn> type;
 
 	// Field type is a structure.  If the structure type has a getter then getting is allowed
 	// and should be rewritten as a call to the getter, passing the field reference.
@@ -1004,14 +1017,14 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
 	case "get_": {
 	    if (!t.hasGetMethod)
 		return nomatch;	// Issue 6: Warning desired
-	    var expr = "(" + t.name + "._get_impl(" + ref + "))";
+	    let expr = "(" + t.name + "._get_impl(" + ref + "))";
 	    return [left + expr + s.substring(pp.where),
 		    left.length + expr.length];
 	}
 	case "set_": {
 	    if (!t.hasSetMethod)
 		return nomatch;	// Issue 6: Warning desired
-	    var expr = "(" + t.name + "._set_impl(" + ref + "," + expandMacrosIn(endstrip(rhs)) + "))";
+	    let expr = "(" + t.name + "._set_impl(" + ref + "," + expandMacrosIn(endstrip(rhs)) + "))";
 	    return [left + expr + s.substring(pp.where),
 		    left.length + expr.length];
 	}
@@ -1027,19 +1040,19 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
 //   type, eg, for a struct Foo with field x we may see Foo.array_get_x(SELF, n)
 // firstArg and secondArg are non-optional; thirdArg is used if the operation is set
 
-function arrMacro(s, p, ms) {
-    var m=ms[0];
-    var typeName=ms[1];
-    var operation=ms[2];
-    var field=ms[3];
-    var nomatch = [s,p+m.length];
+function arrMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
+    let m=ms[0];
+    let typeName=ms[1];
+    let operation=ms[2];
+    let field=ms[3];
+    let nomatch:[string,number] = [s,p+m.length];
 
-    var type = findType(typeName);
+    let type = findType(typeName);
     if (!type)
 	return nomatch;
 
-    var pp = new ParamParser(s, p+m.length);
-    var as = (pp).allArgs();
+    let pp = new ParamParser(s, p+m.length);
+    let as = (pp).allArgs();
 
     // Issue 6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
 
@@ -1056,9 +1069,9 @@ function arrMacro(s, p, ms) {
 	if (field)
 	    return nomatch;
     }
-    var ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + type.size + "*" + expandMacrosIn(endstrip(as[1])) + ")";
+    let ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + type.size + "*" + expandMacrosIn(endstrip(as[1])) + ")";
     if (field) {
-	var fld = (<StructDefn> type).findAccessibleFieldFor(operation, field);
+	let fld = (<StructDefn> type).findAccessibleFieldFor(operation, field);
 	if (!fld)
 	    return nomatch;
 	ref = "(" + ref + "+" + fld.offset + ")";
@@ -1070,7 +1083,7 @@ function arrMacro(s, p, ms) {
 
 // Since @new is new syntax, we throw errors for all misuse.
 
-function newMacro(s, p, ms) {
+function newMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];
     let arrayType=ms[1];
     let classType=ms[2];
@@ -1097,7 +1110,7 @@ function newMacro(s, p, ms) {
 	    left.length + expr.length];
 }
 
-function findType(name:string) {
+function findType(name:string):Defn {
     if (!knownTypes.test(name))
 	throw new Error("Internal: Unknown type in sizeofType: " + name);
     return knownTypes.get(name);

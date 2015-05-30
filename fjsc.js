@@ -8,7 +8,7 @@ var __extends = this.__extends || function (d, b) {
     __.prototype = b.prototype;
     d.prototype = new __();
 };
-// This is source code for TypeScript 1.5 and node.js 0.10.
+// This is source code for TypeScript 1.5 and node.js 0.10 / ECMAScript 5.
 // Tested with tsc 1.5.0-beta and nodejs 0.10.25.
 /*
  * Usage:
@@ -94,7 +94,7 @@ var ClassDefn = (function (_super) {
         this.className = ""; // Base1>Base2>name
         this.classId = 0;
         this.subclasses = []; // direct proper subclasses
-        this.vtable = null; // FIXME: type!
+        this.vtable = null;
     }
     ClassDefn.prototype.hasMethod = function (name) {
         for (var _i = 0, _a = this.methods; _i < _a.length; _i++) {
@@ -106,12 +106,20 @@ var ClassDefn = (function (_super) {
     };
     return ClassDefn;
 })(UserDefn);
+var Virtual = (function () {
+    function Virtual(name, reverseCases, default_) {
+        this.name = name;
+        this.reverseCases = reverseCases;
+        this.default_ = default_;
+    }
+    return Virtual;
+})();
 var VirtualMethodNameIterator = (function () {
     function VirtualMethodNameIterator(cls) {
         this.cls = cls;
         this.i = 0;
         this.inherited = false;
-        this.filter = {};
+        this.filter = {}; // FIXME: string set
     }
     VirtualMethodNameIterator.prototype.next = function () {
         for (;;) {
@@ -138,7 +146,7 @@ var VirtualMethodNameIterator = (function () {
 })();
 var InclusiveSubclassIterator = (function () {
     function InclusiveSubclassIterator(cls) {
-        this.stack = [];
+        this.stack = []; // FIXME: type?
         this.stack.push(cls);
     }
     InclusiveSubclassIterator.prototype.next = function () {
@@ -245,11 +253,11 @@ var MapEntry = (function () {
     };
     return MapEntry;
 })();
-// Simple map.  Allows properties to be added and updated, but not to
-// be removed.
+// Simple map from string to T.  Allows properties to be added and
+// updated, but not to be removed.
 var SMap = (function () {
     function SMap() {
-        this.props = []; // Array of values
+        this.props = [];
         this.mapping = {}; // Map from name to index
         this.generation = 0; // Incremented on update (but not on add)
     }
@@ -259,18 +267,18 @@ var SMap = (function () {
     SMap.prototype.get = function (n) {
         var probe = this.mapping[n];
         if (typeof probe == "number")
-            return this.props[probe];
+            return this.props[probe].value;
         return null;
     };
     SMap.prototype.put = function (n, v) {
         var probe = this.mapping[n];
         if (typeof probe == "number") {
-            this.props[probe] = v;
+            this.props[probe].value = v;
             this.generation++;
         }
         else {
             this.mapping[n] = this.props.length;
-            this.props.push(v);
+            this.props.push({ name: n, value: v });
         }
     };
     SMap.prototype.copy = function () {
@@ -281,7 +289,7 @@ var SMap = (function () {
                 newMap.mapping[n] = this.mapping[n];
         return newMap;
     };
-    SMap.prototype.iterator = function () {
+    SMap.prototype.values = function () {
         var theMap = this;
         var generation = this.generation;
         var props = this.props;
@@ -291,7 +299,21 @@ var SMap = (function () {
                     throw new Error("Generator invalidated by assignment");
                 if (i == props.length)
                     return null;
-                return props[i++];
+                return props[i++].value;
+            } };
+    };
+    SMap.prototype.keysValues = function () {
+        var theMap = this;
+        var generation = this.generation;
+        var props = this.props;
+        var i = 0;
+        return { next: function () {
+                if (theMap.generation != generation)
+                    throw new Error("Generator invalidated by assignment");
+                if (i == props.length)
+                    return [null, null];
+                var x = props[i++];
+                return [x.name, x.value];
             } };
     };
     return SMap;
@@ -623,7 +645,7 @@ function layoutDefn(d, map, size, align) {
                 align = Math.max(align, st.align);
                 map.put(p.name, new MapEntry(p.name, false, size, st));
                 var root = p.name;
-                var mIter = st.map.iterator();
+                var mIter = st.map.values();
                 for (var fld = mIter.next(); fld; fld = mIter.next()) {
                     var fldname = root + "_" + fld.name;
                     map.put(fldname, new MapEntry(fldname, fld.expand, size + fld.offset, fld.type));
@@ -691,20 +713,20 @@ function createVirtualsFor(cls) {
     var vtable = [];
     var mnames = new VirtualMethodNameIterator(cls);
     for (var _a = mnames.next(), mname = _a[0], isInherited = _a[1]; mname != ""; (_b = mnames.next(), mname = _b[0], isInherited = _b[1], _b)) {
-        var reverseCases = {};
+        var reverseCases = new SMap();
         var subs = new InclusiveSubclassIterator(cls);
         for (var subcls = subs.next(); subcls; subcls = subs.next()) {
             var impl = findMethodImplFor(subcls, cls.baseTypeRef, mname);
             if (!impl)
                 continue;
-            if (!reverseCases.hasOwnProperty(impl))
-                reverseCases[impl] = [];
-            reverseCases[impl].push(subcls.classId);
+            if (!reverseCases.test(impl))
+                reverseCases.put(impl, []);
+            reverseCases.get(impl).push(subcls.classId);
         }
         var def = null;
         if (isInherited && cls.baseTypeRef)
             def = findMethodImplFor(cls.baseTypeRef, null, mname);
-        vtable.push({ name: mname, reverseCases: reverseCases, default_: def });
+        vtable.push(new Virtual(mname, reverseCases, def));
     }
     cls.vtable = vtable;
     var _b;
@@ -813,15 +835,13 @@ function pasteupTypes() {
                     var virtual = _e[_d];
                     nlines.push(virtual.name + ": function (SELF, ...args) {");
                     nlines.push("  switch (_mem_int32[SELF>>2]) {");
-                    var rev = virtual.reverseCases;
-                    for (var revname in rev) {
-                        if (rev.hasOwnProperty(revname)) {
-                            for (var _f = 0, _g = rev[revname]; _f < _g.length; _f++) {
-                                var r = _g[_f];
-                                nlines.push("    case " + r + ": ");
-                            }
-                            nlines.push("      return " + revname + "(SELF, ...args);");
+                    var kv = virtual.reverseCases.keysValues();
+                    for (var _f = kv.next(), name_3 = _f[0], cases = _f[1]; name_3; (_g = kv.next(), name_3 = _g[0], cases = _g[1], _g)) {
+                        for (var _h = 0; _h < cases.length; _h++) {
+                            var c = cases[_h];
+                            nlines.push("    case " + c + ": ");
                         }
+                        nlines.push("      return " + name_3 + "(SELF, ...args);");
                     }
                     nlines.push("    default:");
                     nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(SELF, ...args)") : "throw new Error('Bad type')") + ";");
@@ -842,6 +862,7 @@ function pasteupTypes() {
             nlines.push(lines[k++]);
         source.lines = nlines;
     }
+    var _g;
 }
 function expandGlobalAccessorsAndMacros() {
     for (var _i = 0; _i < allSources.length; _i++) {
