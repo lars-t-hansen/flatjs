@@ -77,7 +77,6 @@ identity) with named, mutable fields.
 
   Struct-Method ::= "@get" "(" "SELF" ")" Function-body
                   | "@set" "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
-                  | "@copy" "(" "SELF", Parameter ")" Function-body
 
   Parameter ::= Id (":" Tokens-except-comma-or-rightparen )?
 
@@ -109,7 +108,7 @@ chain of struct-typed fields.
 
 Every field name must be unique within the struct.
 
-Within the bodies of @get, @set, and @copy, 'this' has an undetermined
+Within the bodies of @get and @set, 'this' has an undetermined
 binding (for now) and should not be referenced.
 
 NOTE: The meaning of 'this' will be nailed down and will either be the

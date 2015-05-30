@@ -68,10 +68,6 @@ assertEq(Point3D.z(q), 8);
     @get(SELF) {
 	return {x:SELF.x, y:SELF.y};
     }
-    @copy(SELF, other) {
-	SELF.set_x(Pair.x(other));
-	SELF.set_y(Pair.y(other));
-    }
 } @end
 
 assertEq(Pair.SIZE, 16);

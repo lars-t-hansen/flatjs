@@ -194,8 +194,7 @@ class Prop {
 enum MethodKind {
     Virtual,
     Get,
-    Set,
-    Copy
+    Set
 }
 
 class Method {
@@ -412,7 +411,6 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		switch (m[1]) {
 		case "get": method_type = MethodKind.Get; break;
 		case "set": method_type = MethodKind.Set; break;
-		case "copy": method_type = MethodKind.Copy; break;
 		}
 		method_name = "";
 		mbody = [m[2]];
@@ -772,7 +770,6 @@ function pasteupTypes():void {
 		    switch (m.kind) {
 		    case MethodKind.Get: name = "_get_impl"; break;
 		    case MethodKind.Set: name = "_set_impl"; break;
-		    case MethodKind.Copy: name = "_copy_impl"; break;
 		    }
 		}
 		else if (name == "init")

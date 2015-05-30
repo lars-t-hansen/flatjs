@@ -219,7 +219,6 @@ var MethodKind;
     MethodKind[MethodKind["Virtual"] = 0] = "Virtual";
     MethodKind[MethodKind["Get"] = 1] = "Get";
     MethodKind[MethodKind["Set"] = 2] = "Set";
-    MethodKind[MethodKind["Copy"] = 3] = "Copy";
 })(MethodKind || (MethodKind = {}));
 var Method = (function () {
     function Method(line, kind, name, body) {
@@ -443,9 +442,6 @@ function collectDefinitions(filename, lines) {
                         break;
                     case "set":
                         method_type = MethodKind.Set;
-                        break;
-                    case "copy":
-                        method_type = MethodKind.Copy;
                         break;
                 }
                 method_name = "";
@@ -801,9 +797,6 @@ function pasteupTypes() {
                             break;
                         case MethodKind.Set:
                             name_2 = "_set_impl";
-                            break;
-                        case MethodKind.Copy:
-                            name_2 = "_copy_impl";
                             break;
                     }
                 }
