@@ -1,29 +1,32 @@
 /* -*- mode: javascript -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ *
+ * Author: Lars T Hansen, lhansen@mozilla.com
+ */
 var __extends = this.__extends || function (d, b) {
     for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
     function __() { this.constructor = d; }
     __.prototype = b.prototype;
     d.prototype = new __();
 };
-// This is source code for TypeScript 1.5 and node.js 0.10 / ECMAScript 5.
-// Tested with tsc 1.5.0-beta and nodejs 0.10.25.
 /*
+ * FlatJS compiler.  Desugars FlatJS syntax in JavaScript programs.
+ *
  * Usage:
  *   fjsc input-file ...
  *
  * One output file will be produced for each input file.  Each input
- * file must have extension .xx.flatjs, where x is typically js or
- * ts.  On output the .flatjs suffix will be stripped.
+ * file must have extension .xx.flatjs, where x is "js" or "ts".  On
+ * output the .flatjs suffix will be stripped.
+ *
+ *
+ * This is source code for TypeScript 1.5 and node.js 0.10 / ECMAScript 5.
+ * Tested with tsc 1.5.0-beta and nodejs 0.10.25.
  *
  * To compile:
  *   tsc -t ES5 -m commonjs fjsc.ts
- *
- * An alternative to the ad-hoc and brittle macro expansion at some of
- * the later stages here is to emit macro definitions for sweet.js and
- * postprocess the output with that.
  */
 /// <reference path='typings/node/node.d.ts' />
 var fs = require("fs");
@@ -119,7 +122,7 @@ var VirtualMethodNameIterator = (function () {
         this.cls = cls;
         this.i = 0;
         this.inherited = false;
-        this.filter = {}; // FIXME: string set
+        this.filter = new SSet();
     }
     VirtualMethodNameIterator.prototype.next = function () {
         for (;;) {
@@ -136,9 +139,9 @@ var VirtualMethodNameIterator = (function () {
                 continue;
             if (m.name == "init")
                 continue;
-            if (this.filter.hasOwnProperty(m.name))
+            if (this.filter.test(m.name))
                 continue;
-            this.filter[m.name] = true;
+            this.filter.put(m.name);
             return [m.name, this.inherited];
         }
     };
@@ -146,14 +149,15 @@ var VirtualMethodNameIterator = (function () {
 })();
 var InclusiveSubclassIterator = (function () {
     function InclusiveSubclassIterator(cls) {
-        this.stack = []; // FIXME: type?
+        this.stack = [];
         this.stack.push(cls);
     }
     InclusiveSubclassIterator.prototype.next = function () {
         if (this.stack.length == 0)
             return null;
-        var x = this.stack.pop();
-        if (typeof x == "number") {
+        var top = this.stack.pop();
+        if (typeof top == "number") {
+            var x = top;
             var xs = this.stack.pop();
             var cls = xs[x++];
             if (x < xs.length) {
@@ -167,6 +171,7 @@ var InclusiveSubclassIterator = (function () {
             return cls;
         }
         else {
+            var x = top;
             if (x.subclasses.length > 0) {
                 this.stack.push(x.subclasses);
                 this.stack.push(0);
@@ -318,7 +323,7 @@ var SMap = (function () {
     };
     return SMap;
 })();
-// String set (not currently used)
+// String set
 var SSet = (function () {
     function SSet() {
         this.mapping = {}; // Map from name to true
@@ -327,8 +332,6 @@ var SSet = (function () {
         return typeof this.mapping[n] == "boolean";
     };
     SSet.prototype.put = function (n) {
-        if (typeof this.mapping[n] == "boolean")
-            return;
         this.mapping[n] = true;
     };
     return SSet;
@@ -486,7 +489,7 @@ function collectDefinitions(filename, lines) {
     return [defs, nlines];
 }
 var knownTypes = new SMap();
-var knownIds = {}; // FIXME: This is a set of integers, clean it up
+var knownIds = new SMap();
 var userTypes = [];
 function buildTypeMap() {
     knownTypes.put("int8", new PrimitiveDefn("int8", 1, true));
@@ -607,9 +610,10 @@ function layoutClass(d) {
     // layoutDefn updates d.map, d.size, d.align
     d.className = (d.baseTypeRef ? (d.baseTypeRef.className + ">") : "") + d.name;
     d.classId = computeClassId(d.className);
-    if (knownIds[d.classId])
-        throw new Error("Duplicate class ID for " + d.className + ": previous=" + knownIds[d.classId] + ", id=" + d.classId);
-    knownIds[d.classId] = d.className;
+    var idAsString = String(d.classId);
+    if (knownIds.test(idAsString))
+        throw new Error("Duplicate class ID for " + d.className + ": previous=" + knownIds.get(idAsString).className);
+    knownIds.put(idAsString, d);
 }
 function layoutStruct(d) {
     layoutDefn(d, new SMap(), 0, 0);

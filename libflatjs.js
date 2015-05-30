@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
- * Author: Lars T Hansen, lth@acm.org.
+ * Author: Lars T Hansen, lhansen@mozilla.com
  */
 
 /* libflatjs.js - load this before loading your compiled FlatJS program.

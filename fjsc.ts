@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
- * Author: Lars T Hansen, lth@acm.org.
+ * Author: Lars T Hansen, lhansen@mozilla.com
  */
 
 /*
@@ -101,7 +101,7 @@ class Virtual {
 class VirtualMethodNameIterator {
     private i = 0;
     private inherited = false;
-    private filter = {};	// FIXME: string set
+    private filter = new SSet();
 
     constructor(private cls:ClassDefn) {}
 
@@ -120,16 +120,16 @@ class VirtualMethodNameIterator {
 		continue;
 	    if (m.name == "init") // Not virtual
 		continue;
-	    if (this.filter.hasOwnProperty(m.name))
+	    if (this.filter.test(m.name))
 		continue;
-	    this.filter[m.name] = true;
+	    this.filter.put(m.name);
 	    return [m.name, this.inherited];
 	}
     }
 }
 
 class InclusiveSubclassIterator {
-    private stack = [];		// FIXME: type?
+    private stack:(ClassDefn|number|ClassDefn[])[] = [];
 
     constructor(cls:ClassDefn) {
 	this.stack.push(cls);
@@ -138,9 +138,10 @@ class InclusiveSubclassIterator {
     next(): ClassDefn {
 	if (this.stack.length == 0)
 	    return null;
-	let x = this.stack.pop();
-	if (typeof x == "number") {
-	    let xs = this.stack.pop();
+	let top = this.stack.pop();
+	if (typeof top == "number") {
+	    let x = <number> top;
+	    let xs = <ClassDefn[]> this.stack.pop();
 	    let cls = xs[x++];
 	    if (x < xs.length) {
 		this.stack.push(xs);
@@ -153,6 +154,7 @@ class InclusiveSubclassIterator {
 	    return cls;
 	}
 	else {
+	    let x = <ClassDefn> top;
 	    if (x.subclasses.length > 0) {
 		this.stack.push(x.subclasses);
 		this.stack.push(0);
@@ -290,7 +292,8 @@ class SMap<T> {
     }
 }
 
-// String set (not currently used)
+// String set
+
 class SSet {
     private mapping = {};	// Map from name to true
 
@@ -299,7 +302,6 @@ class SSet {
     }
 
     put(n:string):void {
-	if (typeof this.mapping[n] == "boolean") return;
 	this.mapping[n] = true;
     }
 }
@@ -451,7 +453,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 }
 
 const knownTypes = new SMap<Defn>();
-const knownIds = {};		// FIXME: This is a set of integers, clean it up
+const knownIds = new SMap<ClassDefn>();
 const userTypes:UserDefn[] = [];
 
 function buildTypeMap():void {
@@ -574,9 +576,10 @@ function layoutClass(d:ClassDefn):void {
     // layoutDefn updates d.map, d.size, d.align
     d.className = (d.baseTypeRef ? (d.baseTypeRef.className + ">") : "") + d.name;
     d.classId = computeClassId(d.className);
-    if (knownIds[d.classId])
-	throw new Error("Duplicate class ID for " + d.className + ": previous=" + knownIds[d.classId] + ", id=" + d.classId);
-    knownIds[d.classId] = d.className;
+    let idAsString = String(d.classId);
+    if (knownIds.test(idAsString))
+	throw new Error("Duplicate class ID for " + d.className + ": previous=" + knownIds.get(idAsString).className);
+    knownIds.put(idAsString, d);
 }
 
 function layoutStruct(d:UserDefn):void {
