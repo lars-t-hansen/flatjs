@@ -78,7 +78,7 @@ var UserDefn = (function (_super) {
             case "get_":
             case "set_":
             case "ref_":
-                return this.map[prop];
+                return this.map.get(prop);
             default:
                 return null;
         }
@@ -94,7 +94,7 @@ var ClassDefn = (function (_super) {
         this.className = ""; // Base1>Base2>name
         this.classId = 0;
         this.subclasses = []; // direct proper subclasses
-        this.vtable = null;
+        this.vtable = null; // FIXME: type!
     }
     ClassDefn.prototype.hasMethod = function (name) {
         for (var _i = 0, _a = this.methods; _i < _a.length; _i++) {
@@ -245,8 +245,82 @@ var MapEntry = (function () {
     };
     return MapEntry;
 })();
-// TODO: push this into a struct, along with input/output file names
-var allDefs = [];
+// Simple map.  Allows properties to be added and updated, but not to
+// be removed.
+var SMap = (function () {
+    function SMap() {
+        this.props = []; // Array of values
+        this.mapping = {}; // Map from name to index
+        this.generation = 0; // Incremented on update (but not on add)
+    }
+    SMap.prototype.test = function (n) {
+        return typeof this.mapping[n] == "number";
+    };
+    SMap.prototype.get = function (n) {
+        var probe = this.mapping[n];
+        if (typeof probe == "number")
+            return this.props[probe];
+        return null;
+    };
+    SMap.prototype.put = function (n, v) {
+        var probe = this.mapping[n];
+        if (typeof probe == "number") {
+            this.props[probe] = v;
+            this.generation++;
+        }
+        else {
+            this.mapping[n] = this.props.length;
+            this.props.push(v);
+        }
+    };
+    SMap.prototype.copy = function () {
+        var newMap = new SMap();
+        newMap.props = this.props.slice(0);
+        for (var n in this.mapping)
+            if (this.mapping.hasOwnProperty(n))
+                newMap.mapping[n] = this.mapping[n];
+        return newMap;
+    };
+    SMap.prototype.iterator = function () {
+        var theMap = this;
+        var generation = this.generation;
+        var props = this.props;
+        var i = 0;
+        return { next: function () {
+                if (theMap.generation != generation)
+                    throw new Error("Generator invalidated by assignment");
+                if (i == props.length)
+                    return null;
+                return props[i++];
+            } };
+    };
+    return SMap;
+})();
+// String set (not currently used)
+var SSet = (function () {
+    function SSet() {
+        this.mapping = {}; // Map from name to true
+    }
+    SSet.prototype.test = function (n) {
+        return typeof this.mapping[n] == "boolean";
+    };
+    SSet.prototype.put = function (n) {
+        if (typeof this.mapping[n] == "boolean")
+            return;
+        this.mapping[n] = true;
+    };
+    return SSet;
+})();
+var Source = (function () {
+    function Source(input_file, output_file, defs, lines) {
+        this.input_file = input_file;
+        this.output_file = output_file;
+        this.defs = defs;
+        this.lines = lines;
+    }
+    return Source;
+})();
+var allSources = [];
 function main(args) {
     for (var _i = 0; _i < args.length; _i++) {
         var input_file = args[_i];
@@ -255,7 +329,9 @@ function main(args) {
             throw new Error("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
         var text = fs.readFileSync(input_file, "utf8");
         var lines = text.split("\n");
-        allDefs.push(collectDefinitions(input_file, lines));
+        var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
+        var output_file = input_file.replace(/\.flatjs$/, "");
+        allSources.push(new Source(input_file, output_file, defs, residual));
     }
     buildTypeMap();
     resolveTypeRefs();
@@ -265,10 +341,9 @@ function main(args) {
     expandSelfAccessors();
     pasteupTypes();
     expandGlobalAccessorsAndMacros();
-    for (var i = 0; i < args.length; i++) {
-        var output_file = args[i].replace(/\.flatjs$/, "");
-        var text = allDefs[i][1].join("\n");
-        fs.writeFileSync(output_file, text, "utf8");
+    for (var _b = 0; _b < allSources.length; _b++) {
+        var s = allSources[_b];
+        fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
     }
 }
 var Ws = "\\s+";
@@ -298,17 +373,17 @@ function collectDefinitions(filename, lines) {
             continue;
         }
         var kind = "";
-        var name = "";
+        var name_1 = "";
         var inherit = "";
         var lineno = i;
         var m = null;
         if (m = struct_re.exec(l)) {
             kind = "struct";
-            name = m[1];
+            name_1 = m[1];
         }
         else if (m = class_re.exec(l)) {
             kind = "class";
-            name = m[1];
+            name_1 = m[1];
             inherit = m[2] ? m[2] : "";
         }
         else
@@ -322,7 +397,7 @@ function collectDefinitions(filename, lines) {
         // Do not check for duplicate names here since that needs to
         // take into account inheritance.
         while (i < lim) {
-            var l = lines[i++];
+            l = lines[i++];
             if (end_re.test(l))
                 break;
             if (m = method_re.exec(l)) {
@@ -382,34 +457,32 @@ function collectDefinitions(filename, lines) {
         if (in_method)
             methods.push(new Method(i, method_type, method_name, mbody));
         if (kind == "class")
-            defs.push(new ClassDefn(filename, lineno, name, inherit, properties, methods, nlines.length));
+            defs.push(new ClassDefn(filename, lineno, name_1, inherit, properties, methods, nlines.length));
         else
-            defs.push(new StructDefn(filename, lineno, name, properties, methods, nlines.length));
+            defs.push(new StructDefn(filename, lineno, name_1, properties, methods, nlines.length));
     }
     return [defs, nlines];
 }
-var builtinTypes = { int8: new PrimitiveDefn("int8", 1, true),
-    uint8: new PrimitiveDefn("uint8", 1, true),
-    int16: new PrimitiveDefn("int16", 2, true),
-    uint16: new PrimitiveDefn("uint16", 2, true),
-    int32: new PrimitiveDefn("int32", 4, true),
-    uint32: new PrimitiveDefn("uint32", 4, true),
-    float32: new PrimitiveDefn("float32", 4, false),
-    float64: new PrimitiveDefn("float64", 8, false)
-};
-var atomicTypes = { int8: true, uint8: true, int16: true, uint16: true, int32: true, uint32: true };
-var knownTypes = {}; // Map from string to UserDefn
-var knownIds = {};
-var allTypes = [];
+var knownTypes = new SMap();
+var knownIds = {}; // FIXME: This is a set of integers, clean it up
+var userTypes = [];
 function buildTypeMap() {
-    for (var i = 0; i < allDefs.length; i++) {
-        var defs = allDefs[i][0];
-        for (var _i = 0; _i < defs.length; _i++) {
-            var d = defs[_i];
-            if (knownTypes.hasOwnProperty(d.name))
+    knownTypes.put("int8", new PrimitiveDefn("int8", 1, true));
+    knownTypes.put("uint8", new PrimitiveDefn("uint8", 1, true));
+    knownTypes.put("int16", new PrimitiveDefn("int16", 2, true));
+    knownTypes.put("uint16", new PrimitiveDefn("uint16", 2, true));
+    knownTypes.put("int32", new PrimitiveDefn("int32", 4, true));
+    knownTypes.put("uint32", new PrimitiveDefn("uint32", 4, true));
+    knownTypes.put("float32", new PrimitiveDefn("float32", 4, false));
+    knownTypes.put("float64", new PrimitiveDefn("float64", 8, false));
+    for (var _i = 0; _i < allSources.length; _i++) {
+        var s = allSources[_i];
+        for (var _a = 0, _b = s.defs; _a < _b.length; _a++) {
+            var d = _b[_a];
+            if (knownTypes.test(d.name))
                 throw new Error(d.file + ":" + d.line + ": Duplicate type name: " + d.name);
-            knownTypes[d.name] = d;
-            allTypes.push(d);
+            knownTypes.put(d.name, d);
+            userTypes.push(d);
         }
     }
 }
@@ -418,36 +491,36 @@ function buildTypeMap() {
 //  - For each property, check that the referenced type exists, and add a property typeRef that references the definition
 //  - For each property, check that atomic/synchronic is only used on appropriate types
 function resolveTypeRefs() {
-    for (var i = 0; i < allTypes.length; i++) {
-        var d = allTypes[i];
+    for (var _i = 0; _i < userTypes.length; _i++) {
+        var d = userTypes[_i];
         if (d.kind == DefnKind.Class) {
             var cls = d;
             if (cls.baseName != "") {
-                if (!knownTypes.hasOwnProperty(cls.baseName))
+                var probe = knownTypes.get(cls.baseName);
+                if (!probe)
                     throw new Error(cls.file + ":" + cls.line + ": Missing base type: " + cls.baseName);
-                cls.baseTypeRef = knownTypes[cls.baseName];
+                if (probe.kind != DefnKind.Class)
+                    throw new Error(cls.file + ":" + cls.line + ": Base type is not class: " + cls.baseName);
+                cls.baseTypeRef = probe;
                 cls.baseTypeRef.subclasses.push(cls);
             }
         }
-        for (var _i = 0, _a = d.props; _i < _a.length; _i++) {
-            var p = _a[_i];
+        for (var _a = 0, _b = d.props; _a < _b.length; _a++) {
+            var p = _b[_a];
+            if (!knownTypes.test(p.typeName))
+                throw new Error(d.file + ":" + p.line + ": Undefined type: " + p.typeName);
+            var ty = knownTypes.get(p.typeName);
             if (p.qual != PropQual.None) {
-                if (!atomicTypes.hasOwnProperty(p.typeName))
+                if (!(ty.kind == DefnKind.Primitive && ty.atomic))
                     throw new Error(d.file + ":" + p.line + ": Not an atomic type: " + p.typeName);
             }
-            if (builtinTypes.hasOwnProperty(p.typeName)) {
-                p.typeRef = builtinTypes[p.typeName];
-                continue;
-            }
-            if (!knownTypes.hasOwnProperty(p.typeName))
-                throw new Error(d.file + ":" + p.line + ": Undefined type: " + p.typeName);
-            p.typeRef = knownTypes[p.typeName];
+            p.typeRef = ty;
         }
     }
 }
 function checkRecursion() {
-    for (var _i = 0; _i < allTypes.length; _i++) {
-        var d = allTypes[_i];
+    for (var _i = 0; _i < userTypes.length; _i++) {
+        var d = userTypes[_i];
         if (d.kind == DefnKind.Struct)
             checkRecursionForStruct(d);
         else if (d.kind == DefnKind.Class)
@@ -462,10 +535,8 @@ function checkRecursion() {
             var p = _a[_i];
             if (p.isArray)
                 continue;
-            if (builtinTypes.hasOwnProperty(p.typeName))
-                continue;
-            var probe = knownTypes[p.typeName];
-            if (probe.kind != DefnKind.Struct)
+            var probe = knownTypes.get(p.typeName);
+            if (!probe || probe.kind != DefnKind.Struct)
                 continue;
             var s = probe;
             if (s.live)
@@ -491,8 +562,8 @@ function checkRecursion() {
     }
 }
 function layoutTypes() {
-    for (var _i = 0; _i < allTypes.length; _i++) {
-        var d = allTypes[_i];
+    for (var _i = 0; _i < userTypes.length; _i++) {
+        var d = userTypes[_i];
         if (d.kind == DefnKind.Class)
             layoutClass(d);
         else
@@ -500,13 +571,13 @@ function layoutTypes() {
     }
 }
 function layoutClass(d) {
-    var map = {};
+    var map = new SMap();
     var size = 4;
     var align = 4;
     if (d.baseName != "") {
         if (d.baseTypeRef.map == null)
             layoutClass(d.baseTypeRef);
-        map = shallowCopy(d.baseTypeRef.map);
+        map = d.baseTypeRef.map.copy();
         size = d.baseTypeRef.size;
         align = d.baseTypeRef.align;
     }
@@ -519,7 +590,7 @@ function layoutClass(d) {
     knownIds[d.classId] = d.className;
 }
 function layoutStruct(d) {
-    layoutDefn(d, {}, 0, 0);
+    layoutDefn(d, new SMap(), 0, 0);
 }
 function layoutDefn(d, map, size, align) {
     for (var _i = 0, _a = d.props; _i < _a.length; _i++) {
@@ -532,7 +603,7 @@ function layoutDefn(d, map, size, align) {
                 var pt = p.typeRef;
                 size = (size + pt.size - 1) & ~(pt.size - 1);
                 align = Math.max(align, pt.align);
-                map[p.name] = new MapEntry(p.name, true, size, pt);
+                map.put(p.name, new MapEntry(p.name, true, size, pt));
                 size += pt.size;
                 break;
             }
@@ -540,7 +611,7 @@ function layoutDefn(d, map, size, align) {
                 // Could also be array, don't look at the contents
                 size = (size + 3) & ~3;
                 align = Math.max(align, 4);
-                map[p.name] = new MapEntry(p.name, true, size, builtinTypes.int32);
+                map.put(p.name, new MapEntry(p.name, true, size, knownTypes.get("int32")));
                 size += 4;
                 break;
             }
@@ -550,14 +621,12 @@ function layoutDefn(d, map, size, align) {
                     layoutStruct(st);
                 size = (size + st.align - 1) & ~(st.align - 1);
                 align = Math.max(align, st.align);
-                map[p.name] = new MapEntry(p.name, false, size, st);
+                map.put(p.name, new MapEntry(p.name, false, size, st));
                 var root = p.name;
-                for (var n in st.map) {
-                    if (st.map.hasOwnProperty(n)) {
-                        var fld = st.map[n];
-                        var fldname = root + "_" + fld.name;
-                        map[fldname] = new MapEntry(fldname, fld.expand, size + fld.offset, fld.type);
-                    }
+                var mIter = st.map.iterator();
+                for (var fld = mIter.next(); fld; fld = mIter.next()) {
+                    var fldname = root + "_" + fld.name;
+                    map.put(fldname, new MapEntry(fldname, fld.expand, size + fld.offset, fld.type));
                 }
                 size += st.size;
                 break;
@@ -571,13 +640,6 @@ function layoutDefn(d, map, size, align) {
     d.map = map;
     d.size = size;
     d.align = align;
-}
-function shallowCopy(obj) {
-    var result = {};
-    for (var n in obj)
-        if (obj.hasOwnProperty(n))
-            result[n] = obj[n];
-    return result;
 }
 // Compute a 28-bit nonnegative hash value for the name.  This needs
 // to be *globally* unique (ie across workers).  There's really no
@@ -610,8 +672,8 @@ function computeClassId(name) {
 }
 // For each class, create a representation of its vtable
 function createVirtuals() {
-    for (var _i = 0; _i < allTypes.length; _i++) {
-        var t = allTypes[_i];
+    for (var _i = 0; _i < userTypes.length; _i++) {
+        var t = userTypes[_i];
         if (t.kind == DefnKind.Class)
             createVirtualsFor(t);
     }
@@ -663,8 +725,8 @@ var self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqu
 // TODO: really should check validity of the name here, not hard to do.
 // Can fall back on that happening on the next pass probably.
 function expandSelfAccessors() {
-    for (var _i = 0; _i < allTypes.length; _i++) {
-        var t = allTypes[_i];
+    for (var _i = 0; _i < userTypes.length; _i++) {
+        var t = userTypes[_i];
         for (var _a = 0, _b = t.methods; _a < _b.length; _a++) {
             var m = _b[_a];
             var body = m.body;
@@ -680,13 +742,14 @@ function expandSelfAccessors() {
     }
 }
 function pasteupTypes() {
-    for (var i = 0; i < allDefs.length; i++) {
-        var defs = allDefs[i][0];
-        var lines = allDefs[i][1];
+    for (var _i = 0; _i < allSources.length; _i++) {
+        var source = allSources[_i];
+        var defs = source.defs;
+        var lines = source.lines;
         var nlines = [];
         var k = 0;
-        for (var j = 0; j < defs.length; j++) {
-            var d = defs[j];
+        for (var _a = 0; _a < defs.length; _a++) {
+            var d = defs[_a];
             while (k < d.origin && k < lines.length)
                 nlines.push(lines[k++]);
             nlines.push("const " + d.name + " = {");
@@ -702,27 +765,26 @@ function pasteupTypes() {
             //
             // Implementation methods are emitted directly in the defining type, with a name suffix _impl.
             // For struct methods, the name is "_get_impl", "_set_impl", or "_copy_impl".
-            var meths = d.methods;
-            for (var l = 0; l < meths.length; l++) {
-                var m = meths[l];
-                var name = m.name;
-                if (name == "") {
+            for (var _b = 0, _c = d.methods; _b < _c.length; _b++) {
+                var m = _c[_b];
+                var name_2 = m.name;
+                if (name_2 == "") {
                     switch (m.kind) {
                         case MethodKind.Get:
-                            name = "_get_impl";
+                            name_2 = "_get_impl";
                             break;
                         case MethodKind.Set:
-                            name = "_set_impl";
+                            name_2 = "_set_impl";
                             break;
                         case MethodKind.Copy:
-                            name = "_copy_impl";
+                            name_2 = "_copy_impl";
                             break;
                     }
                 }
-                else if (name == "init")
+                else if (name_2 == "init")
                     ;
                 else
-                    name += "_impl";
+                    name_2 += "_impl";
                 var body = m.body;
                 // Formatting: useful to strip all trailing blank lines from
                 // the body first.
@@ -730,16 +792,16 @@ function pasteupTypes() {
                 while (last > 0 && /^\s*$/.test(body[last]))
                     last--;
                 if (last == 0)
-                    nlines.push("  " + name + " : function " + body[0] + ",");
+                    nlines.push("  " + name_2 + " : function " + body[0] + ",");
                 else {
-                    nlines.push("  " + name + " : function " + body[0]);
+                    nlines.push("  " + name_2 + " : function " + body[0]);
                     for (var x = 1; x < last; x++)
                         nlines.push(body[x]);
                     nlines.push(body[last] + ",");
                 }
             }
             // Now do vtable, if appropriate.
-            // TODO: instead of using ...args we really must use a
+            // Issue 2: instead of using ...args we really must use a
             // signature from one of the method defs, but it's tricky
             // since we may have to strip annotations, and there's
             // also a question about rest arguments.  (Not to mention
@@ -747,17 +809,17 @@ function pasteupTypes() {
             // TODO: better error message?
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                var vtable = cls.vtable;
-                for (var l = 0; l < vtable.length; l++) {
-                    var virtual = vtable[l];
+                for (var _d = 0, _e = cls.vtable; _d < _e.length; _d++) {
+                    var virtual = _e[_d];
                     nlines.push(virtual.name + ": function (SELF, ...args) {");
                     nlines.push("  switch (_mem_int32[SELF>>2]) {");
                     var rev = virtual.reverseCases;
                     for (var revname in rev) {
                         if (rev.hasOwnProperty(revname)) {
-                            var revs = rev[revname];
-                            for (var r = 0; r < revs.length; r++)
-                                nlines.push("    case " + revs[r] + ": ");
+                            for (var _f = 0, _g = rev[revname]; _f < _g.length; _f++) {
+                                var r = _g[_f];
+                                nlines.push("    case " + r + ": ");
+                            }
                             nlines.push("      return " + revname + "(SELF, ...args);");
                         }
                     }
@@ -778,16 +840,17 @@ function pasteupTypes() {
         }
         while (k < lines.length)
             nlines.push(lines[k++]);
-        allDefs[i][1] = nlines;
+        source.lines = nlines;
     }
 }
 function expandGlobalAccessorsAndMacros() {
-    for (var i = 0; i < allDefs.length; i++) {
-        var lines = allDefs[i][1];
+    for (var _i = 0; _i < allSources.length; _i++) {
+        var source = allSources[_i];
+        var lines = source.lines;
         var nlines = [];
         for (var j = 0; j < lines.length; j++)
             nlines.push(expandMacrosIn(lines[j]));
-        allDefs[i][1] = nlines;
+        source.lines = nlines;
     }
 }
 var acc_re = /([A-Za-z][A-Za-z0-9]*)\.(set_|ref_)?([a-zA-Z0-9_]+)\s*\(/g;
@@ -828,9 +891,8 @@ var ParamParser = (function () {
             return null;
         var depth = 0;
         var start = this.pos;
-        // TODO: Really should outlaw regular expressions, but much harder, and somewhat marginal
-        // TODO: Really should handle /* .. */ comments
-        // TODO: Check that parens and braces nest properly
+        // Issue 8: Really should handle regular expressions, but much harder, and somewhat marginal
+        // Issue 7: Really should handle /* .. */ comments
         while (this.pos < this.lim) {
             switch (this.input.charAt(this.pos++)) {
                 case ',':
@@ -855,7 +917,7 @@ var ParamParser = (function () {
                     break;
                 case '\'':
                 case '"':
-                    // FIXME: implement this
+                    // Issue 5: implement this
                     throw new Error("Internal error: Avoid strings in arguments for now");
             }
         }
@@ -889,18 +951,19 @@ function accMacro(s, p, ms) {
     var propName = ms[3];
     var nomatch = [s, p + m.length];
     var left = s.substring(0, p);
-    // FIXME: atomics, synchronics and all operations on them
-    // Atomics should be expanded inline.
-    // Synchronics should indirect through methods on FlatJS, probably.
+    // Issue 3: atomics, synchronics and all operations on them
     if (!operation)
         operation = "get_";
-    var cls = knownTypes[className];
-    if (!cls)
+    var ty = knownTypes.get(className);
+    if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
         return nomatch;
+    var cls = ty;
     var fld = cls.findAccessibleFieldFor(operation, propName);
-    if (!fld)
+    if (!fld) {
+        //console.log("No match for " + className + "  " + operation + "  " + propName);
         return nomatch;
-    // TODO: Emit warnings for arity abuse, at a minimum.
+    }
+    // Issue 6: Emit warnings for arity abuse, at a minimum.
     var pp = new ParamParser(s, p + m.length);
     var as = (pp).allArgs();
     switch (operation) {
@@ -949,7 +1012,7 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
                     left.length + expr.length];
             }
             default:
-                return nomatch; // Warning desired
+                return nomatch; // Issue 6: Warning desired
         }
     }
     else {
@@ -960,20 +1023,20 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
         switch (operation) {
             case "get_": {
                 if (!t.hasGetMethod)
-                    return nomatch; // Warning desired
+                    return nomatch; // Issue 6: Warning desired
                 var expr = "(" + t.name + "._get_impl(" + ref + "))";
                 return [left + expr + s.substring(pp.where),
                     left.length + expr.length];
             }
             case "set_": {
                 if (!t.hasSetMethod)
-                    return nomatch; // Warning desired
+                    return nomatch; // Issue 6: Warning desired
                 var expr = "(" + t.name + "._set_impl(" + ref + "," + expandMacrosIn(endstrip(rhs)) + "))";
                 return [left + expr + s.substring(pp.where),
                     left.length + expr.length];
             }
             default:
-                return nomatch; // Warning desired
+                return nomatch; // Issue 6: Warning desired
         }
     }
 }
@@ -993,7 +1056,7 @@ function arrMacro(s, p, ms) {
         return nomatch;
     var pp = new ParamParser(s, p + m.length);
     var as = (pp).allArgs();
-    // TODO: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
+    // Issue 6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
     switch (operation) {
         case "get":
             if (as.length != 2)
@@ -1031,12 +1094,12 @@ function newMacro(s, p, ms) {
     var classType = ms[2];
     var left = s.substring(0, p);
     if (classType !== undefined) {
-        var t = knownTypes[classType];
-        if (!t)
+        var t_1 = knownTypes.get(classType);
+        if (!t_1)
             throw new Error("Unknown type argument to @new: " + classType);
-        var expr = "(" + classType + ".initInstance(FlatJS.alloc(" + t.size + "," + t.align + ")))";
-        return [left + expr + s.substring(p + m.length),
-            left.length + expr.length];
+        var expr_1 = "(" + classType + ".initInstance(FlatJS.alloc(" + t_1.size + "," + t_1.align + ")))";
+        return [left + expr_1 + s.substring(p + m.length),
+            left.length + expr_1.length];
     }
     var pp = new ParamParser(s, p + m.length);
     var as = pp.allArgs();
@@ -1050,11 +1113,9 @@ function newMacro(s, p, ms) {
         left.length + expr.length];
 }
 function findType(name) {
-    if (builtinTypes.hasOwnProperty(name))
-        return builtinTypes[name];
-    if (knownTypes.hasOwnProperty(name))
-        return knownTypes[name];
-    throw new Error("Internal: Unknown type in sizeofType: " + name);
+    if (!knownTypes.test(name))
+        throw new Error("Internal: Unknown type in sizeofType: " + name);
+    return knownTypes.get(name);
 }
 // This can also check if x is already properly parenthesized, though that
 // involves counting parens, at least trivially (and then does it matter?).
