@@ -1,11 +1,10 @@
 # FlatJS
 
-FlatJS is a simple language that is currently layered on, but can
-eventually be embedded in, Javascript.
+FlatJS is a "language fragment" layered on JavaScript (and JS dialects) that allows programs to use flat memory (ArrayBuffer and SharedArrayBuffer) conveniently with high performance.
 
-The purpose of FlatJS is to allow JS programs to use ArrayBuffer and
-SharedArrayBuffer memory somewhat conveniently and with high
-performance by layering structured types onto flat memory.
+FlatJS provides structs, classes, and arrays within flat memory, as well as atomic and synchronic fields when using shared memory.  Objects in flat memory are manually managed and represented in JavaScript as pointers into the shared memory, not as native JavaScript objects.  Virtual methods are provided for on class instances.
 
-See SPEC.md for more.
+FlatJS is implemented as a preprocessor that translates JavaScript+FlatJS into plain JavaScript.
+
+See SPEC.md for more information about the language, and test/ and demo/ for test programs.
 
