@@ -315,13 +315,28 @@ containing the following properties:
 There is a global variable called NULL whose value is the null
 pointer, whose integer value is zero.
 
-The FlatJS object has the following methods:
+The FlatJS object has the following public methods:
 
-* init(sab [, initialize]) takes an ArrayBuffer or SharedArrayBuffer and installs it as the global heap.  If initialize=true then the memory is also appropriately initialized.  initialize must be true in the first call to init() the call that performs initialization must return before any other calls to init() are made.  [Normally this means you init(...,true) on the main thread before you send sab to the workers.]
-* alloc(numBytes, byteAlignment) allocates an object of size numBytes with alignment at least byteAlignment and returns it.  If the allocation fails then an exception is thrown.  This never returns 0.
-* calloc(numBytes, byteAlignment) is like alloc, but zero-initializes the memory.
-* free(p) frees an object p that was obtained from alloc(), or does nothing if p is 0.
-* identify(p) returns the Class object if p is a pointer to a class instance, or null.
+* init(sab [, initialize]) takes an ArrayBuffer or SharedArrayBuffer
+  and installs it as the global heap.  If initialize=true then the
+  memory is also appropriately initialized.  initialize must be true
+  in the first call to init() the call that performs initialization
+  must return before any other calls to init() are made.  [Normally
+  this means you init(...,true) on the main thread before you send sab
+  to the workers.]  The buffer must be cleared to all zeroes before
+  being used, and client code should assume it may not modify it
+  directly after calling init() on it.
+* alloc(numBytes, byteAlignment) allocates and zero-initializes an
+  object of size numBytes with alignment at least byteAlignment and
+  returns it.  If the allocation fails then returns 0.
+* allocOrThrow(numBytes, byteAlignment) allocates and zero-initializes
+  an object of size numBytes with alignment at least byteAlignment and
+  returns it.  If the allocation fails then throws a MemoryError
+  exception.
+* free(p) frees an object p that was obtained from alloc(), or does
+  nothing if p is 0.
+* identify(p) returns the Class object if p is a pointer to a class
+  instance, or null.
 
 The allocator operates on the flat memory and is thread-safe if that
 memory is shared.
