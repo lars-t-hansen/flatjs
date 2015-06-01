@@ -88,6 +88,22 @@ IntQueue.prototype.dequeue = function(t) { return IntQueueRepr.dequeue(this._rep
 
 // End
 
+// Synchronic can be represented easily:
+
+@flatjs class SynchronicInt32Repr
+{
+    s: synchronic int32;
+} @end
+
+function SynchronicInt32() { this._repr = @new SynchronicInt32Repr }
+
+// This prototype is shared among synchronics:
+
+Synchronic.prototype.add = function (v) { return this._repr.s.add(v) }
+
+
+// End
+
 These struct definitions:
 
   @shared struct Point {

@@ -8,31 +8,24 @@
 /* libflatjs.js - load this before loading your compiled FlatJS program.
  *
  * Call FlatJS.init before using, see documentation below.
+ *
+ * NOTE: The following needs to be valid ES5 code.
  */
 
 /*
-if (typeof "SharedArrayBuffer" == "undefined") {
-    SharedArrayBuffer = ArrayBuffer;
-    SharedInt8Array = Int8Array;
-    SharedUint8Array = Uint8Array;
-    SharedInt16Array = Int16Array;
-    SharedUint16Array = Uint16Array;
-    SharedInt32Array = Int32Array;
-    SharedUint32Array = Uint32Array;
-    SharedFloat32Array = Float32Array;
-    SharedFloat64Array = Float64Array;
-}
-*/
-
+ * If no Atomics, then polyfill with versions that throw.  These will
+ * ensure that atomics and synchronics throw if the memory is not
+ * shared.
+ */
 if (typeof "Atomics" == "undefined") {
-    Atomics = { load: function (a,n) { return a[n]; },
-		store: function (a,n,v) { a[n]=v; return v; },
-		add: function (a,n,v) { var old=a[n]; a[n]=old+v; return old; },
-		sub: function (a,n,v) { var old=a[n]; a[n]=old-v; return old; },
-		and: function (a,n,v) { var old=a[n]; a[n]=old&v; return old; },
-		or: function (a,n,v) { var old=a[n]; a[n]=old|v; return old; },
-		xor: function (a,n,v) { var old=a[n]; a[n]=old^v; return old; },
-		compareExchange: function (a,n,x,v) { var old=a[n]; if (old==x) a[n] = v; return old; }
+    Atomics = { load: function (...args) { throw "No Atomics"; },
+		store: function (...args) { throw "No Atomics"; },
+		add: function (...args) { throw "No Atomics"; },
+		sub: function (...args) { throw "No Atomics"; },
+		and:  function (...args) { throw "No Atomics"; },
+		or:  function (...args) { throw "No Atomics"; },
+		xor:  function (...args) { throw "No Atomics"; },
+		compareExchange:  function (...args) { throw "No Atomics"; }
 	      };
 }
 
@@ -45,7 +38,7 @@ var _mem_uint32 = null;
 var _mem_float32 = null;
 var _mem_float64 = null;
 
-const FlatJS =
+var FlatJS =
 {
     /*
      * Initialize the local FlatJS instance.
@@ -53,6 +46,11 @@ const FlatJS =
      * Buffer can be an ArrayBuffer or SharedArrayBuffer.  In the
      * latter case, all workers must pass the same buffer during
      * initialization.
+     *
+     * The buffer must be zero-initialized before being passed to
+     * init().  FlatJS assumes ownership of the buffer, client code
+     * should not access it directly after using it to initialize
+     * the heap.
      *
      * "initialize" must be true in exactly one agent and that call
      * must return before any agent can call any other methods on
@@ -71,9 +69,9 @@ const FlatJS =
 
     /*
      * Given a nonnegative size in bytes and a nonnegative
-     * power-of-two alignment, allocate an object of the necessary
-     * size (or larger) and required alignment, and return its
-     * address.
+     * power-of-two alignment, allocate and zero-initialize an object
+     * of the necessary size (or larger) and required alignment, and
+     * return its address.
      *
      * Return NULL if no memory is available.
      */
@@ -83,19 +81,15 @@ const FlatJS =
     },
 
     /*
-     * As alloc, but zero-initialize the memory.  There is no
-     * synchronization after initialization; the zero bits have not
-     * been published.
+     * Ditto, but throw if no memory is available.
+     *
+     * Interesting possibility is to avoid this function
+     * and instead move the test into each initInstance().
      */
-    calloc: function (nbytes, alignment) {
-	// Allocate and zero at least four bytes.
-	nbytes = (nbytes + 3) & ~3;
+    allocOrThrow: function (nbytes, alignment) {
 	var p = this.alloc(nbytes, alignment);
 	if (p == 0)
-	    return 0;
-	var q = p / 4;
-	for ( var i=0, lim=nbytes/4 ; i < lim ; i++ )
-	    _mem_int32[q++] = 0;
+	    throw new MemoryError("Out of memory");
 	return p;
     },
 
@@ -121,11 +115,149 @@ const FlatJS =
 	return null;
     },
 
-    // TODO: Synchronic methods.  If we are using nonshared memory they
-    // should probably throw.
+    // Map of class type IDs to type objects.
 
-    // Private.
-    _idToType: {}
+    _idToType: {},
+
+    // Synchronic layout is 8 bytes (2 x int32) of metadata followed by
+    // the type-specific payload.  The two int32 words are the number
+    // of waiters and the wait word (generation count).
+    //
+    // In the following:
+    //
+    // self is the base address for the Synchronic.
+    // mem is the array to use for the value
+    // idx is the index in mem of the value: (p+8)>>log2(mem.BYTES_PER_ELEMENT)
+    //
+    // _synchronicLoad is just Atomics.load, expand it in-line.
+
+    _synchronicStore: function (self, mem, idx, value) {
+	Atomics.store(mem, idx, value);
+	this._notify(self);
+    },
+
+    _synchronicCompareExchange: function (self, mem, idx, oldval, newval) {
+	var v = Atomics.compareExchange(mem, idx, oldval, newval);
+	if (v == oldval)
+	    this._notify(self);
+	return v;
+    },
+
+    _synchronicAdd: function (self, mem, idx, value) {
+	var v = Atomics.add(mem, idx, value);
+	this._notify(self);
+	return v;
+    },
+
+    _synchronicSub: function (self, mem, idx, value) {
+	var v = Atomics.sub(mem, idx, value);
+	this._notify(self);
+	return v;
+    },
+
+    _synchronicAnd: function (self, mem, idx, value) {
+	var v = Atomics.and(mem, idx, value);
+	this._notify(self);
+	return v;
+    },
+
+    _synchronicOr: function (self, mem, idx, value) {
+	let v = Atomics.or(mem, idx, value);
+	this._notify(self);
+	return v;
+    },
+
+    _synchronicXor: function (self, mem, idx, value) {
+	let v = Atomics.xor(mem, idx, value);
+	this._notify(self);
+	return v;
+    },
+
+    _synchronicLoadWhenNotEqual: function (self, mem, idx, value) {
+	for (;;) {
+	    var tag = Atomics.load(_mem_int32, (self+4)>>2);
+	    var v = Atomics.load(mem, idx) ;
+	    if (v !== value)
+		break;
+	    this._waitForUpdate(self, tag, Number.POSITIVE_INFINITY);
+	}
+	return v;
+    },
+
+    _synchronicLoadWhenEqual: function (self, mem, idx, value) {
+	for (;;) {
+	    var tag = Atomics.load(_mem_int32, (self+4)>>2);
+	    var v = Atomics.load(mem, idx) ;
+	    if (v === value)
+		break;
+	    this._waitForUpdate(self, tag, Number.POSITIVE_INFINITY);
+	}
+	return v;
+    },
+
+    _synchronicExpectUpdate: function (self, mem, idx, value, timeout) {
+	var now = this._now();
+	var limit = now + timeout;
+	for (;;) {
+	    var tag = Atomics.load(_mem_int32, (self+4)>>2);
+	    var v = Atomics.load(mem, idx) ;
+	    if (v !== value || now >= limit)
+		break;
+	    this._waitForUpdate(self, tag, limit - now);
+	    now = this._now();
+	}
+    },
+
+    _waitForUpdate: function (self, tag, timeout) {
+	// Spin for a short time before going into the futexWait.
+	//
+	// Hard to know what a good count should be - it is machine
+	// dependent, for sure, and "typical" applications should
+	// influence the choice.  If the count is high without
+	// hindering an eventual drop into futexWait then it will just
+	// decrease performance.  If the count is low it is pointless.
+	// (This is why Synchronic really wants a native implementation.)
+	//
+	// Data points from a 2.6GHz i7 MacBook Pro:
+	//
+	// - the simple send-integer benchmark (test-sendint.html),
+	//   which is the very simplest case we can really imagine,
+	//   gets noisy timings with an iteration count below 4000
+	//
+	// - the simple send-object benchmark (test-sendmsg.html)
+	//   gets a boost when the count is at least 10000
+	//
+	// 10000 is perhaps 5us (CPI=1, naive) and seems like a
+	// reasonable cutoff, for now - but note, it is reasonable FOR
+	// THIS SYSTEM ONLY, which is a big flaw.
+	//
+	// The better fix might well be to add some kind of spin/nanosleep
+	// functionality to futexWait, see https://bugzil.la/1134973.
+	// That functionality can be platform-dependent and even
+	// adaptive, with JIT support.
+	var i = 10000;
+	do {
+	    // May want this to be a relaxed load, though on x86 it won't matter.
+	    if (Atomics.load(_mem_int32, (self+4)>>2) != tag)
+		return;
+	} while (--i > 0);
+	Atomics.add(_mem_int32, self>>2, 1);
+	Atomics.futexWait(_mem_int32, (self+4)>>2, tag, timeout);
+	Atomics.sub(_mem_int32, self>>2, 1);
+    },
+
+    _notify: function (self) {
+	Atomics.add(_mem_int32, (self+4)>>2, 1);
+	// Would it be appropriate & better to wake n waiters, where n
+	// is the number loaded in the load()?  I almost think so,
+	// since our futexes are fair.
+	if (Atomics.load(_mem_int32, self>>2) > 0)
+	    Atomics.futexWake(_mem_int32, (self+4)>>2, Number.POSITIVE_INFINITY);
+    },
+
+    _now: (typeof 'performance' != 'undefined' && typeof performance.now == 'function'
+	   ? performance.now.bind(performance)
+	   : Date.now.bind(Date)),
 };
 
 function _FlatJS_init_sab(flatjs, sab, initialize) {
@@ -172,6 +304,10 @@ function _FlatJS_init_ab(flatjs, ab, initialize) {
 // address.  (Later, with a header or similar info, it will be
 // different.)
 
+// Note, actual zero-initialization is not currently necessary
+// since the buffer must be zero-initialized by the client code
+// and this is a simple bump allocator.
+
 function _FlatJS_alloc_sab(nbytes, alignment) {
     do {
 	var p = Atomics.load(_mem_int32, 1);
@@ -193,12 +329,17 @@ function _FlatJS_alloc_ab(nbytes, alignment) {
     return p;
 }
 
-const NULL = 0;
-const int8 = { SIZE:1, ALIGN:1, NAME:"int8" };
-const uint8 = { SIZE:1, ALIGN:1, NAME:"uint8" };
-const int16 = { SIZE:2, ALIGN:2, NAME:"int16" };
-const uint16 = { SIZE:2, ALIGN:2, NAME:"uint16" };
-const int32 = { SIZE:4, ALIGN:4, NAME:"int32" };
-const uint32 = { SIZE:4, ALIGN:4, NAME:"uint32" };
-const float32 = { SIZE:4, ALIGN:4, NAME:"float32" };
-const float64 = { SIZE:8, ALIGN:8, NAME:"float64" };
+var NULL = 0;
+var int8 = { SIZE:1, ALIGN:1, NAME:"int8" };
+var uint8 = { SIZE:1, ALIGN:1, NAME:"uint8" };
+var int16 = { SIZE:2, ALIGN:2, NAME:"int16" };
+var uint16 = { SIZE:2, ALIGN:2, NAME:"uint16" };
+var int32 = { SIZE:4, ALIGN:4, NAME:"int32" };
+var uint32 = { SIZE:4, ALIGN:4, NAME:"uint32" };
+var float32 = { SIZE:4, ALIGN:4, NAME:"float32" };
+var float64 = { SIZE:8, ALIGN:8, NAME:"float64" };
+
+function MemoryError(msg) {
+    this.msg = msg;
+}
+MemoryError.prototype = new Error("Memory Error");

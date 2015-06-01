@@ -1,0 +1,40 @@
+/* -*- mode: javascript -*- */
+
+load("../libflatjs.js");
+var ab = new SharedArrayBuffer(65536);
+FlatJS.init(ab, true);
+
+@flatjs class Counter {
+    count:synchronic int32
+    xyzzy:synchronic uint8
+
+    @method init(SELF, x) {
+	SELF.set_count(x);	// synchronic store
+	return SELF;
+    }
+} @end
+
+var c = Counter.init(@new Counter, 7);
+
+Counter.add_count(c, 1);
+assertEq(Counter.count(c), 8);	// Atomics.load, here and below
+
+Counter.compareExchange_count(c, 8, 4);
+assertEq(Counter.count(c), 4);
+
+Counter.sub_count(c, 1);
+assertEq(Counter.count(c), 3);
+
+Counter.or_count(c, 0xB1);
+assertEq(Counter.count(c), 0xB3);
+
+Counter.and_count(c, 0x1A2);
+assertEq(Counter.count(c), 0xA2);
+
+Counter.xor_count(c, 0xFF);
+assertEq(Counter.count(c), 0x5D);
+
+Counter.add_xyzzy(c, 384);
+assertEq(Counter.xyzzy(c), 384%256);
+
+console.log("Done");

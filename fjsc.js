@@ -47,21 +47,42 @@ var Defn = (function () {
 })();
 var PrimitiveDefn = (function (_super) {
     __extends(PrimitiveDefn, _super);
-    function PrimitiveDefn(name, size, atomic) {
+    function PrimitiveDefn(name, size, align, atomic, synchronic) {
+        if (atomic === void 0) { atomic = false; }
+        if (synchronic === void 0) { synchronic = false; }
         _super.call(this, name, DefnKind.Primitive);
         this.atomic = atomic;
+        this.synchronic = synchronic;
         this.size = size;
-        this.align = size;
+        this.align = align;
+        this._memory = "_mem_" + name.split("/").pop();
     }
     Object.defineProperty(PrimitiveDefn.prototype, "memory", {
         get: function () {
-            return "_mem_" + this.name;
+            return this._memory;
         },
         enumerable: true,
         configurable: true
     });
     return PrimitiveDefn;
 })(Defn);
+var AtomicDefn = (function (_super) {
+    __extends(AtomicDefn, _super);
+    function AtomicDefn(name, size, align) {
+        _super.call(this, name, size, align, true, false);
+    }
+    return AtomicDefn;
+})(PrimitiveDefn);
+var SynchronicDefn = (function (_super) {
+    __extends(SynchronicDefn, _super);
+    function SynchronicDefn(name, size, align, baseSize) {
+        _super.call(this, name, size, align, false, true);
+        this.baseSize = baseSize;
+    }
+    // The byte offset within the structure for the payload
+    SynchronicDefn.bias = 8;
+    return SynchronicDefn;
+})(PrimitiveDefn);
 var UserDefn = (function (_super) {
     __extends(UserDefn, _super);
     function UserDefn(file, line, name, kind, props, methods, origin) {
@@ -77,11 +98,38 @@ var UserDefn = (function (_super) {
         this.checked = false;
     }
     UserDefn.prototype.findAccessibleFieldFor = function (operation, prop) {
+        var d = this.map.get(prop);
+        if (!d)
+            return null;
         switch (operation) {
             case "get_":
             case "set_":
             case "ref_":
-                return this.map.get(prop);
+                return d;
+            case "add_":
+            case "sub_":
+            case "and_":
+            case "or_":
+            case "xor_":
+            case "compareExchange_": {
+                if (d.type.kind != DefnKind.Primitive)
+                    return null;
+                var prim = d.type;
+                if (!(prim.atomic || prim.synchronic))
+                    return null;
+                return d;
+            }
+            case "loadWhenEqual_":
+            case "loadWhenNotEqual_":
+            case "expectUpdate_":
+            case "notify_": {
+                if (d.type.kind != DefnKind.Primitive)
+                    return null;
+                var prim = d.type;
+                if (!prim.synchronic)
+                    return null;
+                return d;
+            }
             default:
                 return null;
         }
@@ -488,14 +536,26 @@ var knownTypes = new SMap();
 var knownIds = new SMap();
 var userTypes = [];
 function buildTypeMap() {
-    knownTypes.put("int8", new PrimitiveDefn("int8", 1, true));
-    knownTypes.put("uint8", new PrimitiveDefn("uint8", 1, true));
-    knownTypes.put("int16", new PrimitiveDefn("int16", 2, true));
-    knownTypes.put("uint16", new PrimitiveDefn("uint16", 2, true));
-    knownTypes.put("int32", new PrimitiveDefn("int32", 4, true));
-    knownTypes.put("uint32", new PrimitiveDefn("uint32", 4, true));
-    knownTypes.put("float32", new PrimitiveDefn("float32", 4, false));
-    knownTypes.put("float64", new PrimitiveDefn("float64", 8, false));
+    knownTypes.put("int8", new PrimitiveDefn("int8", 1, 1));
+    knownTypes.put("uint8", new PrimitiveDefn("uint8", 1, 1));
+    knownTypes.put("int16", new PrimitiveDefn("int16", 2, 2));
+    knownTypes.put("uint16", new PrimitiveDefn("uint16", 2, 2));
+    knownTypes.put("int32", new PrimitiveDefn("int32", 4, 4));
+    knownTypes.put("uint32", new PrimitiveDefn("uint32", 4, 4));
+    knownTypes.put("atomic/int8", new AtomicDefn("atomic/int8", 1, 1));
+    knownTypes.put("atomic/uint8", new AtomicDefn("atomic/uint8", 1, 1));
+    knownTypes.put("atomic/int16", new AtomicDefn("atomic/int16", 2, 2));
+    knownTypes.put("atomic/uint16", new AtomicDefn("atomic/uint16", 2, 2));
+    knownTypes.put("atomic/int32", new AtomicDefn("atomic/int32", 4, 4));
+    knownTypes.put("atomic/uint32", new AtomicDefn("atomic/uint32", 4, 4));
+    knownTypes.put("synchronic/int8", new SynchronicDefn("synchronic/int8", 12, 4, 1));
+    knownTypes.put("synchronic/uint8", new SynchronicDefn("synchronic/uint8", 12, 4, 1));
+    knownTypes.put("synchronic/int16", new SynchronicDefn("synchronic/int16", 12, 4, 2));
+    knownTypes.put("synchronic/uint16", new SynchronicDefn("synchronic/uint16", 12, 4, 2));
+    knownTypes.put("synchronic/int32", new SynchronicDefn("synchronic/int32", 12, 4, 4));
+    knownTypes.put("synchronic/uint32", new SynchronicDefn("synchronic/uint32", 12, 4, 4));
+    knownTypes.put("float32", new PrimitiveDefn("float32", 4, 4));
+    knownTypes.put("float64", new PrimitiveDefn("float64", 8, 8));
     for (var _i = 0; _i < allSources.length; _i++) {
         var s = allSources[_i];
         for (var _a = 0, _b = s.defs; _a < _b.length; _a++) {
@@ -530,11 +590,17 @@ function resolveTypeRefs() {
             var p = _b[_a];
             if (!knownTypes.test(p.typeName))
                 throw new Error(d.file + ":" + p.line + ": Undefined type: " + p.typeName);
-            var ty = knownTypes.get(p.typeName);
+            var ty = null;
             if (p.qual != PropQual.None) {
-                if (!(ty.kind == DefnKind.Primitive && ty.atomic))
-                    throw new Error(d.file + ":" + p.line + ": Not an atomic type: " + p.typeName);
+                if (p.qual == PropQual.Atomic)
+                    ty = knownTypes.get("atomic/" + p.typeName);
+                else
+                    ty = knownTypes.get("synchronic/" + p.typeName);
+                if (!ty)
+                    throw new Error(d.file + ":" + p.line + ": Not " + (p.qual == PropQual.Atomic ? "an atomic" : "a synchronic") + " type: " + p.typeName);
             }
+            else
+                ty = knownTypes.get(p.typeName);
             p.typeRef = ty;
         }
     }
@@ -871,7 +937,7 @@ function expandGlobalAccessorsAndMacros() {
         source.lines = nlines;
     }
 }
-var acc_re = /([A-Za-z][A-Za-z0-9]*)\.(set_|ref_)?([a-zA-Z0-9_]+)\s*\(/g;
+var acc_re = /([A-Za-z][A-Za-z0-9]*)\.(add_|sub_|and_|or_|xor_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_|notify_|set_|ref_)?([a-zA-Z0-9_]+)\s*\(/g;
 var arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
 var new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
 function expandMacrosIn(text) {
@@ -962,6 +1028,21 @@ function cleanupArg(s) {
         return null;
     return s;
 }
+// Here, arity includes the self argument
+var OpAttr = {
+    "get_": { arity: 1, atomic: "load", synchronic: "" },
+    "notify_": { arity: 1, atomic: "", synchronic: "_synchronicNotify" },
+    "set_": { arity: 2, atomic: "store", synchronic: "_synchronicStore" },
+    "add_": { arity: 2, atomic: "add", synchronic: "_synchronicAdd" },
+    "sub_": { arity: 2, atomic: "sub", synchronic: "_synchronicSub" },
+    "and_": { arity: 2, atomic: "and", synchronic: "_synchronicAnd" },
+    "or_": { arity: 2, atomic: "or", synchronic: "_synchronicOr" },
+    "xor_": { arity: 2, atomic: "xor", synchronic: "_synchronicXor" },
+    "loadWhenEqual_": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenEqual" },
+    "loadWhenNotEqual_": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenNotEqual" },
+    "expectUpdate_": { arity: 3, atomic: "", synchronic: "_synchronicExpectUpdate" },
+    "compareExchange_": { arity: 3, atomic: "compareExchange", synchronic: "_synchronicCompareExchange" },
+};
 function accMacro(s, p, ms) {
     var m = ms[0];
     var className = ms[1];
@@ -969,13 +1050,14 @@ function accMacro(s, p, ms) {
     var propName = ms[3];
     var nomatch = [s, p + m.length];
     var left = s.substring(0, p);
-    // Issue 3: atomics, synchronics and all operations on them
     if (!operation)
         operation = "get_";
     var ty = knownTypes.get(className);
     if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
         return nomatch;
     var cls = ty;
+    // findAccessibleFieldFor will vet the operation against the field type,
+    // so atomic/synchronic ops will only be allowed on appropriate types
     var fld = cls.findAccessibleFieldFor(operation, propName);
     if (!fld) {
         //console.log("No match for " + className + "  " + operation + "  " + propName);
@@ -984,85 +1066,117 @@ function accMacro(s, p, ms) {
     // Issue 6: Emit warnings for arity abuse, at a minimum.
     var pp = new ParamParser(s, p + m.length);
     var as = (pp).allArgs();
-    switch (operation) {
-        case "get_":
-            if (as.length != 1) {
-                console.log("Bad get arity " + propName + " " + as.length);
-                return nomatch;
-            }
-            ;
-            break;
-        case "set_":
-            if (as.length != 2) {
-                console.log("Bad set arity " + propName + " " + as.length);
-                return nomatch;
-            }
-            ;
-            break;
+    if (OpAttr[operation].arity != as.length) {
+        console.log("Bad set arity " + propName + " / " + as.length);
+        return nomatch;
     }
-    var ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + fld.offset + ")";
+    ;
+    var ref = "(" + expandMacrosIn(endstrip(as[0])) + " + " + fld.offset + ")";
     if (operation == "ref_") {
         return [left + ref + s.substring(pp.where),
             left.length + ref.length];
     }
-    return loadFromRef(ref, fld.type, s, left, operation, pp, as[1], nomatch);
+    return loadFromRef(ref, fld.type, s, left, operation, pp, as[1], as[2], nomatch);
 }
-function loadFromRef(ref, type, s, left, operation, pp, rhs, nomatch) {
-    var mem = "", size = 0;
+function loadFromRef(ref, type, s, left, operation, pp, rhs, rhs2, nomatch) {
+    var mem = "", size = 0, synchronic = false, atomic = false, shift = -1;
     if (type.kind == DefnKind.Primitive) {
-        mem = type.memory;
-        size = type.size;
+        var prim = type;
+        mem = prim.memory;
+        synchronic = prim.synchronic;
+        atomic = prim.atomic;
+        if (synchronic)
+            shift = log2(prim.baseSize);
+        else
+            shift = log2(prim.size);
     }
     else if (type.kind == DefnKind.Class) {
         mem = "_mem_int32";
-        size = 4;
+        shift = 2;
     }
-    if (size > 0) {
-        switch (operation) {
-            case "get_": {
-                var expr = "(" + mem + "[" + ref + ">>" + log2(size) + "])";
-                return [left + expr + s.substring(pp.where),
-                    left.length + expr.length];
-            }
-            case "set_": {
-                var expr = "(" + mem + "[" + ref + ">>" + log2(size) + "] = " + expandMacrosIn(endstrip(rhs)) + ")";
-                return [left + expr + s.substring(pp.where),
-                    left.length + expr.length];
-            }
+    if (shift >= 0) {
+        var expr = "";
+        var op = "";
+        switch (OpAttr[operation].arity) {
+            case 1:
+                break;
+            case 2:
+                rhs = expandMacrosIn(endstrip(rhs));
+                break;
+            case 3:
+                rhs = expandMacrosIn(endstrip(rhs));
+                rhs2 = expandMacrosIn(endstrip(rhs2));
+                break;
             default:
-                return nomatch; // Issue 6: Warning desired
+                throw new Error("Internal error: no operator: " + operation);
         }
+        var fieldIndex = synchronic ? "(" + ref + " + " + SynchronicDefn.bias + ") >> " + shift : ref + " >> " + shift;
+        switch (operation) {
+            case "get_":
+                if (atomic || synchronic)
+                    expr = "Atomics.load(" + mem + ", " + fieldIndex + ")";
+                else
+                    expr = mem + "[" + fieldIndex + "]";
+                break;
+            case "notify_":
+                expr = "FlatJS." + OpAttr[operation].synchronic + "(" + ref + ")";
+                break;
+            case "set_":
+            case "add_":
+            case "sub_":
+            case "and_":
+            case "or_":
+            case "xor_":
+            case "loadWhenEqual_":
+            case "loadWhenNotEqual_":
+                if (atomic)
+                    expr = "Atomics." + OpAttr[operation].atomic + "(" + mem + ", " + fieldIndex + ", " + rhs + ")";
+                else if (synchronic)
+                    expr = "FlatJS." + OpAttr[operation].synchronic + "(" + ref + ", " + mem + ", " + fieldIndex + ", " + rhs + ")";
+                else
+                    expr = mem + "[" + ref + " >> " + shift + "] = " + rhs;
+                break;
+            case "compareExchange_":
+            case "expectUpdate_":
+                if (atomic)
+                    expr = "Atomics." + OpAttr[operation].atomic + "(" + mem + ", " + fieldIndex + ", " + rhs + ", " + rhs2 + ")";
+                else
+                    expr = "FlatJS." + OpAttr[operation].synchronic + "(" + ref + ", " + mem + ", " + fieldIndex + ", " + rhs + ", " + rhs2 + ")";
+                break;
+            default:
+                throw new Error("Internal: No operator: " + operation);
+        }
+        expr = "(" + expr + ")";
+        return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
     else {
         var t = type;
+        var expr = "";
         // Field type is a structure.  If the structure type has a getter then getting is allowed
         // and should be rewritten as a call to the getter, passing the field reference.
         // Ditto setter, which will also pass secondArg.
         switch (operation) {
-            case "get_": {
-                if (!t.hasGetMethod)
-                    return nomatch; // Issue 6: Warning desired
-                var expr = "(" + t.name + "._get_impl(" + ref + "))";
-                return [left + expr + s.substring(pp.where),
-                    left.length + expr.length];
-            }
-            case "set_": {
-                if (!t.hasSetMethod)
-                    return nomatch; // Issue 6: Warning desired
-                var expr = "(" + t.name + "._set_impl(" + ref + "," + expandMacrosIn(endstrip(rhs)) + "))";
-                return [left + expr + s.substring(pp.where),
-                    left.length + expr.length];
-            }
-            default:
-                return nomatch; // Issue 6: Warning desired
+            case "get_":
+                if (t.hasGetMethod)
+                    expr = t.name + "._get_impl(" + ref + ")";
+                break;
+            case "set_":
+                if (t.hasSetMethod)
+                    expr = t.name + "._set_impl(" + ref + ", " + expandMacrosIn(endstrip(rhs)) + ")";
+                break;
         }
+        if (expr == "")
+            return nomatch; // Issue 6: Warning desired
+        expr = "(" + expr + ")";
+        return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
 }
-// operation is get or set
+// operation is get, set
 // typename is the base type, which could be any type at all
 // field may be blank, but if it is not then it is the field name within the
 //   type, eg, for a struct Foo with field x we may see Foo.array_get_x(SELF, n)
 // firstArg and secondArg are non-optional; thirdArg is used if the operation is set
+// FIXME: for fields within a structure, operation could be ref, too
 function arrMacro(s, p, ms) {
     var m = ms[0];
     var typeName = ms[1];
@@ -1075,6 +1189,8 @@ function arrMacro(s, p, ms) {
     var pp = new ParamParser(s, p + m.length);
     var as = (pp).allArgs();
     // Issue 6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
+    // FIXME: atomics on fields of structs within array, syntax would be
+    // T.array_add_x(p,v), T.array_expectUpdate_y(p, v, t).
     switch (operation) {
         case "get":
             if (as.length != 2)
@@ -1103,7 +1219,7 @@ function arrMacro(s, p, ms) {
         ref = "(" + ref + "+" + fld.offset + ")";
         type = fld.type;
     }
-    return loadFromRef(ref, type, s, s.substring(0, p), operation, pp, as[2], nomatch);
+    return loadFromRef(ref, type, s, s.substring(0, p), operation, pp, as[2], as[3], nomatch);
 }
 // Since @new is new syntax, we throw errors for all misuse.
 function newMacro(s, p, ms) {
@@ -1115,7 +1231,7 @@ function newMacro(s, p, ms) {
         var t_1 = knownTypes.get(classType);
         if (!t_1)
             throw new Error("Unknown type argument to @new: " + classType);
-        var expr_1 = "(" + classType + ".initInstance(FlatJS.alloc(" + t_1.size + "," + t_1.align + ")))";
+        var expr_1 = "(" + classType + ".initInstance(FlatJS.allocOrThrow(" + t_1.size + "," + t_1.align + ")))";
         return [left + expr_1 + s.substring(p + m.length),
             left.length + expr_1.length];
     }
@@ -1126,7 +1242,7 @@ function newMacro(s, p, ms) {
     var t = findType(arrayType);
     if (!t)
         throw new Error("Unknown type argument to @new array: " + arrayType);
-    var expr = "(FlatJS.alloc(" + t.size + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.align + "))";
+    var expr = "(FlatJS.allocOrThrow(" + t.size + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.align + "))";
     return [left + expr + s.substring(pp.where),
         left.length + expr.length];
 }

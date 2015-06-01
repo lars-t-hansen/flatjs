@@ -302,7 +302,8 @@ is, without the empty parameter list.
 ## Environment
 
 There is a new global object called "FlatJS".  This is defined in
-libflatjs.js, which must be loaded once before the application files.
+libflatjs.js, which must be loaded once before application files that
+are translated from FlatJS.
 
 For each primitive type (int8, uint8, int16, uint16, int32, uint32,
 float32, float64) there is a global variable with the type name
@@ -310,37 +311,40 @@ containing the following properties:
 
 * SIZE is the size in bytes of the type
 * ALIGN is the required alignment in bytes of the type
-* NAME is the name of thetype
+* NAME is the name of the type
 
 There is a global variable called NULL whose value is the null
 pointer, whose integer value is zero.
 
 The FlatJS object has the following public methods:
 
-* init(sab [, initialize]) takes an ArrayBuffer or SharedArrayBuffer
-  and installs it as the global heap.  If initialize=true then the
-  memory is also appropriately initialized.  initialize must be true
-  in the first call to init() the call that performs initialization
-  must return before any other calls to init() are made.  [Normally
-  this means you init(...,true) on the main thread before you send sab
-  to the workers.]  The buffer must be cleared to all zeroes before
-  being used, and client code should assume it may not modify it
-  directly after calling init() on it.
+* init(buffer [, initialize]) takes an ArrayBuffer or
+  SharedArrayBuffer and installs it as the global heap.  The buffer
+  must be cleared to all zeroes before being used, and client code
+  should assume it may not modify it directly after calling init() on
+  it.  If initialize=true then the memory is also appropriately
+  initialized.  Initialize must be true in the first call to init(),
+  and the call that performs initialization must return before any
+  other calls to init() are made.  [Normally this means you
+  init(...,true) on the main thread before you send a
+  SharedArrayBuffer to other workers.]
 * alloc(numBytes, byteAlignment) allocates and zero-initializes an
   object of size numBytes with alignment at least byteAlignment and
-  returns it.  If the allocation fails then returns 0.
+  returns it.  If the allocation fails then returns the NULL pointer.
 * allocOrThrow(numBytes, byteAlignment) allocates and zero-initializes
   an object of size numBytes with alignment at least byteAlignment and
   returns it.  If the allocation fails then throws a MemoryError
   exception.
 * free(p) frees an object p that was obtained from alloc(), or does
-  nothing if p is 0.
+  nothing if p is the NULL pointer.
 * identify(p) returns the Class object if p is a pointer to a class
   instance, or null.
 
 The allocator operates on the flat memory and is thread-safe if that
 memory is shared.
 
+There is a new global constructor called MemoryError, derived from
+Error.  It is thrown on some allocation failures.
 
 ## How to run the translator
 
