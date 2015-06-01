@@ -906,7 +906,7 @@ function pasteupTypes():void {
 		    let kv = virtual.reverseCases.keysValues();
 		    for ( let [name,cases]=kv.next() ; name ; [name,cases]=kv.next() ) {
 			for ( let c of cases )
-			    nlines.push(`    case ${c}: `);
+			    nlines.push(`    case ${c}:`);
 			nlines.push(`      return ${name}(SELF ${signature});`);
 		    }
 		    nlines.push("    default:");

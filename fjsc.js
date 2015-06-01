@@ -514,10 +514,10 @@ function collectDefinitions(filename, lines) {
                 // this will sometimes fail, notably for '...arg' and maybe for
                 // annotations.
                 //
-                // FIXME: Use a better parser.
-                var pp = new ParamParser(m[2], 1); // Hacky, 0 is wrong-but-right
+                // FIXME: Use a better parser, this is gross.
+                var pp = new ParamParser(m[2], 1);
                 var args = pp.allArgs();
-                args.shift();
+                args.shift(); // Discard SELF
                 method_signature = args;
                 mbody = [m[2]];
             }
@@ -946,7 +946,7 @@ function pasteupTypes() {
                     for (var _f = kv.next(), name_3 = _f[0], cases = _f[1]; name_3; (_g = kv.next(), name_3 = _g[0], cases = _g[1], _g)) {
                         for (var _h = 0; _h < cases.length; _h++) {
                             var c = cases[_h];
-                            nlines.push("    case " + c + ": ");
+                            nlines.push("    case " + c + ":");
                         }
                         nlines.push("      return " + name_3 + "(SELF " + signature + ");");
                     }
