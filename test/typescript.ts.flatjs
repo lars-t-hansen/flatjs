@@ -1,0 +1,17 @@
+/* -*- mode: javascript -*- */
+
+load("../libflatjs.js");
+var ab = new ArrayBuffer(1024);
+FlatJS.init(ab, true);
+
+@flatjs class TSTest {
+    @method testMethod(SELF, x:number, y:string, ...z): void {
+	return x + y + z.join(",");
+    }
+} @end
+
+@flatjs class TSTest2 extends TSTest {
+    @method testMethod(SELF, x:number, y:string, ...z): void {
+	return x + y + z.join(",");
+    }
+} @end

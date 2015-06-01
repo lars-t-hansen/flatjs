@@ -191,6 +191,8 @@ var Virtual = (function () {
     Virtual.prototype.signature = function () {
         if (this.sign == null)
             return ", ...args";
+        if (this.sign.length == 0)
+            return "";
         return ", " + this.sign.join(",");
     };
     return Virtual;
@@ -510,15 +512,16 @@ function collectDefinitions(filename, lines) {
                 in_method = true;
                 method_type = MethodKind.Virtual;
                 method_name = m[1];
-                // Try to parse the signature.  Just use the param parser for now,
-                // this will sometimes fail, notably for '...arg' and maybe for
-                // annotations.
-                //
-                // FIXME: Use a better parser, this is gross.
+                // Parse the signature.  Just use the param parser for now,
+                // but note that what we get back will need postprocessing.
                 var pp = new ParamParser(m[2], 1);
                 var args = pp.allArgs();
                 args.shift(); // Discard SELF
-                method_signature = args;
+                // TODO: In principle there are two signatures here: there is the
+                // parameter signature, which we could/should keep intact in the
+                // virtual, and there is the set of arguments extracted from that,
+                // including any splat.
+                method_signature = args.map(parameterToArgument);
                 mbody = [m[2]];
             }
             else if (m = special_re.exec(l)) {
@@ -573,6 +576,15 @@ function collectDefinitions(filename, lines) {
             defs.push(new StructDefn(filename, lineno, name_1, properties, methods, nlines.length));
     }
     return [defs, nlines];
+}
+// The input is Id, Id:Blah, or ...Id.  Strip any :Blah annotations.
+function parameterToArgument(s) {
+    if (/^\s*(?:\.\.\.)[A-Za-z_$][A-Za-z0-9_$]*\s*$/.test(s))
+        return s;
+    var m = /^\s*([A-Za-z_\$][A-Za-z0-9_\$]*)\s*:?/.exec(s);
+    if (!m)
+        throw new Error("Unable to understand argument to virtual function: <" + s + ">");
+    return m[1];
 }
 var knownTypes = new SMap();
 var knownIds = new SMap();
