@@ -4,6 +4,14 @@
 // Traces a scene and writes to a canvas.
 //
 // lth@acm.org / lhansen@mozilla.com, winter 2012 and later.
+//
+// This is written in flatjs, holding the scene graph in flat memory
+// and rendering into an ArrayBuffer.  The computation is straight JS.
+//
+// This is about 25% faster running on 1 core than the JavaScript
+// version that uses native objects (3900ms vs 5300ms on my late-2013
+// MacBook Pro, 2.6GHz i7).  That's before trying to optimize much,
+// apart from getting rid of varargs in vcalls.
 
 // Global parameters
 
@@ -55,21 +63,21 @@ function dot(a, b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
     @set(SELF, ...args) {
 	if (args.length == 1) {
 	    var v = args[0];
-	    x = v.x;
-	    y = v.y;
-	    z = v.z;
+	    SELF.set_x(v.x);
+	    SELF.set_y(v.y);
+	    SELF.set_z(v.z);
 	}
 	else {
-	    x = args[0];
-	    y = args[1];
-	    z = args[2];
+	    SELF.set_x(args[0]);
+	    SELF.set_y(args[1]);
+	    SELF.set_z(args[2]);
 	}
     }
 } @end
 
 // Avoid intermediate DL3 objects
 
-function subref(a, b) { return DL3(a.x-Vec3.x(b), a.y-Vec3.y(b), a.z-Vec3.z(b)); }
+function subvref(a, b) { return DL3(a.x-Vec3.x(b), a.y-Vec3.y(b), a.z-Vec3.z(b)); }
 function subrefref(a, b) { return DL3(Vec3.x(a)-Vec3.x(b), Vec3.y(a)-Vec3.y(b), Vec3.z(a)-Vec3.z(b)); }
 function mulrefi(a, c) { return DL3(Vec3.x(a)*c, Vec3.y(a)*c, Vec3.z(a)*c); }
 
@@ -134,7 +142,8 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
 	var objs = SELF.objects;
 	for ( var idx=0, limit=SELF.length ; idx < limit ; idx++ ) {
-	    var tmp = Surface.intersect(Surface.array_get(objs,idx), eye, ray, min, max);
+	    var surf = Surface.array_get(objs,idx);
+	    var tmp = Surface.intersect(surf, eye, ray, min, max);
 	    var obj = tmp.obj;
 	    var dist = tmp.dist;
 	    if (obj)
@@ -162,7 +171,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     @method intersect(SELF, eye, ray, min, max) {
 	var DdotD = dot(ray, ray);
-	var EminusC = subref(eye, SELF.ref_center);
+	var EminusC = subvref(eye, SELF.ref_center);
 	var B = dot(ray, EminusC);
 	var disc = B*B - DdotD*(dot(EminusC,EminusC) - SELF.radius*SELF.radius);
 	if (disc < 0.0)
@@ -181,7 +190,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     }
 
     @method normal(SELF, p) {
-	return divi(subref(p, SELF.ref_center), SELF.radius);
+	return divi(subvref(p, SELF.ref_center), SELF.radius);
     }
 } @end
 
@@ -270,7 +279,6 @@ const g_bottom = -1.5;
 const bits = Bitmap.init(@new Bitmap, height, width, DL3(152.0/256.0, 251.0/256.0, 152.0/256.0));
 
 function main() {
-
     setStage();
 
     // No workers, we do this all on the main thread, but the data is
@@ -344,7 +352,7 @@ function setStage() {
 
     world.push(Sphere.init(@new Sphere, m1, DL3(-1, 1, -9), 1));
     world.push(Sphere.init(@new Sphere, m2, DL3(1.5, 1, 0), 0.75));
-    world.push(Sphere.init(@new Triangle, m1, DL3(-1,0,0.75), DL3(-0.75,0,0), DL3(-0.75,1.5,0)));
+    world.push(Triangle.init(@new Triangle, m1, DL3(-1,0,0.75), DL3(-0.75,0,0), DL3(-0.75,1.5,0)));
     world.push(Triangle.init(@new Triangle, m3, DL3(-2,0,0), DL3(-0.5,0,0), DL3(-0.5,2,0)));
     rectangle(world, m4, DL3(-5,0,5), DL3(5,0,5), DL3(5,0,-40), DL3(-5,0,-40));
     cube(world, m5, DL3(1, 1.5, 1.5), DL3(1.5, 1.5, 1.25), DL3(1.5, 1.75, 1.25), DL3(1, 1.75, 1.5),
