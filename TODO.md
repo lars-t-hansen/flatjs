@@ -30,6 +30,13 @@
   A destructor would call member destructors and base destructors.
   Presumably there would be some @delete operator?  [Though see
   below, re syntax]
+* Follow TypedObject more closely: Consider int32.atomic as naming the
+  atomic int32 type.  T.Array would be an array of T (capitalized
+  because TypedObject does so).  T.Array(10).Array is a nice
+  representation of array-of-array.  So we'd have T.Array.set(p,k,v).
+  We'd have @new int32.Array(10), @new int32.atomic.Array(10).  The
+  accessor syntax is clunky but for common cases no worse than what
+  we have now, and clearly more general.
 
 ### Likely medium value
 
@@ -54,6 +61,14 @@
 
 ### Unclear value
 
+* Consider generalizing syntax etc in the following way.  Instead of
+  writing T.x_y_z(p) for a subreference, write T.x.y.z(p).  Expand it in
+  the same way (and now _ is allowed, maybe, though it's needed for
+  all other operations).
+* The one-argument @set and the no-argument @get are most easily
+  generated from the field-wise getters and setters, so maybe
+  the syntax is @get generate and @set generate, to make them happen
+  with default behavior?
 * Is there really a need to use '@new' instead of just 'new'?
 * There's really no reason to stick with @new and @delete, the
   syntax could be ClassName.create(arg, ...) and
@@ -62,6 +77,7 @@
   TypeName.array.destroy(p, arg, n).
 * Allow the use of $ in identifiers, so that it's possible to
   create a poor man's private properties, since _ is illegal.
+  Note hash algorithm may have to change.
 * Class constructor and static properties.  Really quite unclear how
   to handle this, since there is no shared-memory representation of
   the class at present.  Clearly it's possible for the runtime to
@@ -74,15 +90,13 @@
   type system syntax (mostly); this is a regrettable restriction.
   we'd want eg atomic_int32.array_add(v, x), which is pretty clunky
   but would work.
-* There's the possibility of a syntax change.  Consider int32.atomic
-  as naming the atomic int32 type.  T.array would be an array of T.
-  Check out what TypedObject is doing about that.  T.array(10).array
-  is a nice representation of array-of-array.  So we'd have T.array.set(p,k,v).
 * Once you have a macro processor that replaces instances of
   TypeName.propname with anything else, it's a short slide down the
   slippery slope to add enums and compile-time constants (which would
   be necessary for in-line arrays with symbolically defined lengths,
   "@flatjs const x = 10").  Sliding further, constant expressions.
+  Sliding further still, type aliases: @type X = int32.atomic.Array,
+  then X.set() and X.get().
 * String types, maybe?  Easy enough to define a SharedString class
   that references an underlying array, probably.  Doing so would get
   into interesting territory about sharing and refcounting and
