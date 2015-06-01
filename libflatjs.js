@@ -119,6 +119,11 @@ var FlatJS =
 
     _idToType: {},
 
+    _badType: function (self) {
+	var t = this.identify(self);
+	return new Error("Observed type: " + (t ? t.NAME : "*invalid*") + ", address=" + self);
+    },
+
     // Synchronic layout is 8 bytes (2 x int32) of metadata followed by
     // the type-specific payload.  The two int32 words are the number
     // of waiters and the wait word (generation count).
@@ -162,13 +167,13 @@ var FlatJS =
     },
 
     _synchronicOr: function (self, mem, idx, value) {
-	let v = Atomics.or(mem, idx, value);
+	var v = Atomics.or(mem, idx, value);
 	this._notify(self);
 	return v;
     },
 
     _synchronicXor: function (self, mem, idx, value) {
-	let v = Atomics.xor(mem, idx, value);
+	var v = Atomics.xor(mem, idx, value);
 	this._notify(self);
 	return v;
     },
@@ -257,7 +262,7 @@ var FlatJS =
 
     _now: (typeof 'performance' != 'undefined' && typeof performance.now == 'function'
 	   ? performance.now.bind(performance)
-	   : Date.now.bind(Date)),
+	   : Date.now.bind(Date))
 };
 
 function _FlatJS_init_sab(flatjs, sab, initialize) {
