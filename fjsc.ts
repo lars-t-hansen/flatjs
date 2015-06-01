@@ -39,6 +39,14 @@ class Defn {
     align = 0;
 
     constructor(public name:string, public kind:DefnKind) { }
+
+    get elementSize(): number { return this.size; }
+    get elementAlign(): number { return this.align; }
+
+    static pointerSize = 4;
+    static pointerAlign = 4;
+    static pointerTypeName = "int32";
+    static pointerMemName = "_mem_int32";
 }
 
 class PrimitiveDefn extends Defn {
@@ -130,6 +138,9 @@ class ClassDefn extends UserDefn {
     constructor(file:string, line:number, name:string, public baseName:string, props:Prop[], methods:Method[], origin:number) {
 	super(file, line, name, DefnKind.Class, props, methods, origin);
     }
+
+    get elementSize(): number { return Defn.pointerSize; }
+    get elementAlign(): number { return Defn.pointerAlign; }
 
     hasMethod(name:string):boolean {
 	for ( let m of this.methods )
@@ -460,6 +471,14 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		method_name = "";
 		mbody = [m[2]];
 	    }
+	    else if (in_method) {
+		// TODO: if we're going to be collecting random cruft
+		// then blank and comment lines at the end of a method
+		// really should be placed at the beginning of the
+		// next method.  Also see hack in pasteupTypes() that
+		// removes blank lines from the end of a method body.
+		mbody.push(l);
+	    }
 	    else if (m = prop_re.exec(l)) {
 		let qual = PropQual.None;
 		switch (m[2]) {
@@ -470,14 +489,6 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	    }
 	    else if (m = aprop_re.exec(l)) {
 		properties.push(new Prop(i, m[1], PropQual.None, true, m[2]));
-	    }
-	    else if (in_method) {
-		// TODO: if we're going to be collecting random cruft
-		// then blank and comment lines at the end of a method
-		// really should be placed at the beginning of the
-		// next method.  Also see hack in pasteupTypes() that
-		// removes blank lines from the end of a method body.
-		mbody.push(l);
 	    }
 	    else if (blank_re.test(l)) {
 	    }
@@ -666,10 +677,10 @@ function layoutDefn(d:UserDefn, map:SMap<MapEntry>, size:number, align:number):v
 	}
 	case DefnKind.Class: {
 	    // Could also be array, don't look at the contents
-	    size = (size + 3) & ~3;
-	    align = Math.max(align, 4);
-	    map.put(p.name, new MapEntry(p.name, true, size, knownTypes.get("int32")));
-	    size += 4;
+	    size = (size + (Defn.pointerAlign - 1)) & ~(Defn.pointerAlign - 1);
+	    align = Math.max(align, Defn.pointerAlign);
+	    map.put(p.name, new MapEntry(p.name, true, size, knownTypes.get(Defn.pointerTypeName)));
+	    size += Defn.pointerSize;
 	    break;
 	}
 	case DefnKind.Struct: {
@@ -849,13 +860,14 @@ function pasteupTypes():void {
 		while (last > 0 && /^\s*$/.test(body[last]))
 		    last--;
 		if (last == 0)
-		    nlines.push("  " + name + " : function " + body[0] + ",");
+		    nlines.push("  " + name + " : function " + body[0]);
 		else {
 		    nlines.push("  " + name + " : function " + body[0]);
 		    for ( let x=1; x < last ; x++ )
 			nlines.push(body[x]);
-		    nlines.push(body[last] + ",");
+		    nlines.push(body[last]);
 		}
+		nlines.push(","); // Gross hack, but if a comment is the last line of the body then necessary
 	    }
 
 	    // Now do vtable, if appropriate.
@@ -880,7 +892,7 @@ function pasteupTypes():void {
 			nlines.push("      return " + name + "(SELF, ...args);");
 		    }
 		    nlines.push("    default:");
-		    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(SELF, ...args)") : "throw new Error('Bad type')") + ";");
+		    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(SELF, ...args)") : "throw FlatJS._badType(SELF)") + ";");
 		    nlines.push("  }");
 		    nlines.push("},");
 		}
@@ -1012,6 +1024,7 @@ function cleanupArg(s:string):string {
 
 const OpAttr = {
     "get_": { arity: 1, atomic: "load", synchronic: "" },
+    "ref_": { arity: 1, atomic: "", synchronic: "" },
     "notify_": { arity: 1, atomic: "", synchronic: "_synchronicNotify" },
     "set_": { arity: 2, atomic: "store", synchronic: "_synchronicStore" },
     "add_": { arity: 2, atomic: "add", synchronic: "_synchronicAdd" },
@@ -1083,8 +1096,8 @@ function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:str
 	    shift = log2(prim.size);
     }
     else if (type.kind == DefnKind.Class) {
-	mem = "_mem_int32";
-	shift = 2;
+	mem = Defn.pointerMemName;
+	shift = log2(Defn.pointerSize);
     }
     if (shift >= 0) {
 	let expr = "";
@@ -1138,7 +1151,8 @@ function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:str
 	default:
 	    throw new Error("Internal: No operator: " + operation);
 	}
-	expr = `(${expr})`;
+	// This is deeply troubling, but parens interact with semicolon insertion.
+	//expr = `(${expr})`;
 	return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
     else {
@@ -1159,7 +1173,8 @@ function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:str
 	}
 	if (expr == "")
 	    return nomatch;	// Issue 6: Warning desired
-	expr = `(${expr})`;
+	// See above
+	//expr = `(${expr})`;
 	return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
 }
@@ -1204,11 +1219,12 @@ function arrMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
 	if (field)
 	    return nomatch;
     }
-    let ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + type.size + "*" + expandMacrosIn(endstrip(as[1])) + ")";
+    let ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + type.elementSize + "*" + expandMacrosIn(endstrip(as[1])) + ")";
     if (field) {
 	let fld = (<StructDefn> type).findAccessibleFieldFor(operation, field);
 	if (!fld)
 	    return nomatch;
+	// WARNING: parens, again
 	ref = "(" + ref + "+" + fld.offset + ")";
 	type = fld.type;
     }
@@ -1227,7 +1243,8 @@ function newMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
 	let t = knownTypes.get(classType);
 	if (!t)
 	    throw new Error("Unknown type argument to @new: " + classType);
-	let expr = "(" + classType + ".initInstance(FlatJS.allocOrThrow(" + t.size + "," + t.align + ")))";
+	// NOTE, parens removed here
+	let expr = classType + ".initInstance(FlatJS.allocOrThrow(" + t.size + "," + t.align + "))";
 	return [left + expr + s.substring(p + m.length),
 		left.length + expr.length ];
     }
@@ -1240,7 +1257,8 @@ function newMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
     let t = findType(arrayType);
     if (!t)
 	throw new Error("Unknown type argument to @new array: " + arrayType);
-    let expr = "(FlatJS.allocOrThrow(" + t.size + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.align + "))";
+    // NOTE, parens removed here
+    let expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.elementAlign + ")";
     return [left + expr + s.substring(pp.where),
 	    left.length + expr.length];
 }

@@ -43,6 +43,20 @@ var Defn = (function () {
         this.size = 0;
         this.align = 0;
     }
+    Object.defineProperty(Defn.prototype, "elementSize", {
+        get: function () { return this.size; },
+        enumerable: true,
+        configurable: true
+    });
+    Object.defineProperty(Defn.prototype, "elementAlign", {
+        get: function () { return this.align; },
+        enumerable: true,
+        configurable: true
+    });
+    Defn.pointerSize = 4;
+    Defn.pointerAlign = 4;
+    Defn.pointerTypeName = "int32";
+    Defn.pointerMemName = "_mem_int32";
     return Defn;
 })();
 var PrimitiveDefn = (function (_super) {
@@ -147,6 +161,16 @@ var ClassDefn = (function (_super) {
         this.subclasses = []; // direct proper subclasses
         this.vtable = null;
     }
+    Object.defineProperty(ClassDefn.prototype, "elementSize", {
+        get: function () { return Defn.pointerSize; },
+        enumerable: true,
+        configurable: true
+    });
+    Object.defineProperty(ClassDefn.prototype, "elementAlign", {
+        get: function () { return Defn.pointerAlign; },
+        enumerable: true,
+        configurable: true
+    });
     ClassDefn.prototype.hasMethod = function (name) {
         for (var _i = 0, _a = this.methods; _i < _a.length; _i++) {
             var m = _a[_i];
@@ -495,6 +519,14 @@ function collectDefinitions(filename, lines) {
                 method_name = "";
                 mbody = [m[2]];
             }
+            else if (in_method) {
+                // TODO: if we're going to be collecting random cruft
+                // then blank and comment lines at the end of a method
+                // really should be placed at the beginning of the
+                // next method.  Also see hack in pasteupTypes() that
+                // removes blank lines from the end of a method body.
+                mbody.push(l);
+            }
             else if (m = prop_re.exec(l)) {
                 var qual = PropQual.None;
                 switch (m[2]) {
@@ -509,14 +541,6 @@ function collectDefinitions(filename, lines) {
             }
             else if (m = aprop_re.exec(l)) {
                 properties.push(new Prop(i, m[1], PropQual.None, true, m[2]));
-            }
-            else if (in_method) {
-                // TODO: if we're going to be collecting random cruft
-                // then blank and comment lines at the end of a method
-                // really should be placed at the beginning of the
-                // next method.  Also see hack in pasteupTypes() that
-                // removes blank lines from the end of a method body.
-                mbody.push(l);
             }
             else if (blank_re.test(l)) {
             }
@@ -697,10 +721,10 @@ function layoutDefn(d, map, size, align) {
             }
             case DefnKind.Class: {
                 // Could also be array, don't look at the contents
-                size = (size + 3) & ~3;
-                align = Math.max(align, 4);
-                map.put(p.name, new MapEntry(p.name, true, size, knownTypes.get("int32")));
-                size += 4;
+                size = (size + (Defn.pointerAlign - 1)) & ~(Defn.pointerAlign - 1);
+                align = Math.max(align, Defn.pointerAlign);
+                map.put(p.name, new MapEntry(p.name, true, size, knownTypes.get(Defn.pointerTypeName)));
+                size += Defn.pointerSize;
                 break;
             }
             case DefnKind.Struct: {
@@ -877,13 +901,14 @@ function pasteupTypes() {
                 while (last > 0 && /^\s*$/.test(body[last]))
                     last--;
                 if (last == 0)
-                    nlines.push("  " + name_2 + " : function " + body[0] + ",");
+                    nlines.push("  " + name_2 + " : function " + body[0]);
                 else {
                     nlines.push("  " + name_2 + " : function " + body[0]);
                     for (var x = 1; x < last; x++)
                         nlines.push(body[x]);
-                    nlines.push(body[last] + ",");
+                    nlines.push(body[last]);
                 }
+                nlines.push(","); // Gross hack, but if a comment is the last line of the body then necessary
             }
             // Now do vtable, if appropriate.
             // Issue 2: instead of using ...args we really must use a
@@ -907,7 +932,7 @@ function pasteupTypes() {
                         nlines.push("      return " + name_3 + "(SELF, ...args);");
                     }
                     nlines.push("    default:");
-                    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(SELF, ...args)") : "throw new Error('Bad type')") + ";");
+                    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(SELF, ...args)") : "throw FlatJS._badType(SELF)") + ";");
                     nlines.push("  }");
                     nlines.push("},");
                 }
@@ -1031,6 +1056,7 @@ function cleanupArg(s) {
 // Here, arity includes the self argument
 var OpAttr = {
     "get_": { arity: 1, atomic: "load", synchronic: "" },
+    "ref_": { arity: 1, atomic: "", synchronic: "" },
     "notify_": { arity: 1, atomic: "", synchronic: "_synchronicNotify" },
     "set_": { arity: 2, atomic: "store", synchronic: "_synchronicStore" },
     "add_": { arity: 2, atomic: "add", synchronic: "_synchronicAdd" },
@@ -1091,8 +1117,8 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, rhs2, nomatch) {
             shift = log2(prim.size);
     }
     else if (type.kind == DefnKind.Class) {
-        mem = "_mem_int32";
-        shift = 2;
+        mem = Defn.pointerMemName;
+        shift = log2(Defn.pointerSize);
     }
     if (shift >= 0) {
         var expr = "";
@@ -1146,7 +1172,8 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, rhs2, nomatch) {
             default:
                 throw new Error("Internal: No operator: " + operation);
         }
-        expr = "(" + expr + ")";
+        // This is deeply troubling, but parens interact with semicolon insertion.
+        //expr = `(${expr})`;
         return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
     else {
@@ -1167,7 +1194,8 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, rhs2, nomatch) {
         }
         if (expr == "")
             return nomatch; // Issue 6: Warning desired
-        expr = "(" + expr + ")";
+        // See above
+        //expr = `(${expr})`;
         return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
 }
@@ -1211,11 +1239,12 @@ function arrMacro(s, p, ms) {
         if (field)
             return nomatch;
     }
-    var ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + type.size + "*" + expandMacrosIn(endstrip(as[1])) + ")";
+    var ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + type.elementSize + "*" + expandMacrosIn(endstrip(as[1])) + ")";
     if (field) {
         var fld = type.findAccessibleFieldFor(operation, field);
         if (!fld)
             return nomatch;
+        // WARNING: parens, again
         ref = "(" + ref + "+" + fld.offset + ")";
         type = fld.type;
     }
@@ -1231,7 +1260,8 @@ function newMacro(s, p, ms) {
         var t_1 = knownTypes.get(classType);
         if (!t_1)
             throw new Error("Unknown type argument to @new: " + classType);
-        var expr_1 = "(" + classType + ".initInstance(FlatJS.allocOrThrow(" + t_1.size + "," + t_1.align + ")))";
+        // NOTE, parens removed here
+        var expr_1 = classType + ".initInstance(FlatJS.allocOrThrow(" + t_1.size + "," + t_1.align + "))";
         return [left + expr_1 + s.substring(p + m.length),
             left.length + expr_1.length];
     }
@@ -1242,7 +1272,8 @@ function newMacro(s, p, ms) {
     var t = findType(arrayType);
     if (!t)
         throw new Error("Unknown type argument to @new array: " + arrayType);
-    var expr = "(FlatJS.allocOrThrow(" + t.size + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.align + "))";
+    // NOTE, parens removed here
+    var expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.elementAlign + ")";
     return [left + expr + s.substring(pp.where),
         left.length + expr.length];
 }
