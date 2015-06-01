@@ -1,3 +1,5 @@
+/* -*- mode: javascript -*- */
+
 // Ray tracer, largely out of Shirley & Marschner 3rd Ed.
 // Traces a scene and writes to a canvas.
 //
@@ -10,7 +12,7 @@ const width = 800;
 
 // FlatJS setup.
 
-const RAW_MEMORY = new SharedArrayBuffer(height*width*4 + 65536);
+const RAW_MEMORY = new ArrayBuffer(height*width*4 + 65536);
 FlatJS.init(RAW_MEMORY, true);
 
 // CONFIGURATION
@@ -100,10 +102,16 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     @method init(SELF, material) {
 	SELF.set_material(material)
+	return SELF;
     }
 
-    @method intersect(self, eye, ray, min, max) { throw "Pure: Surface.intersect" }
-    @method normal(self, p) { throw "Pure: Surface.normal" }
+    @method intersect(SELF, eye, ray, min, max) {
+	throw "Pure: Surface.intersect"
+    }
+
+    @method normal(SELF, p) {
+	throw "Pure: Surface.normal"
+    }
 } @end
 
 @flatjs class Scene extends Surface {
@@ -113,10 +121,10 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     @method init(SELF, objects) {
 	var len = objects.length;
 	SELF.set_length(len)
-	var os = @new array(Surface, len);
+	var objs = @new array(Surface, len);
 	for ( var i=0 ; i < len ; i++ )
-	    Surface.array_set(os, i, objects[i]);
-	SELF.set_objects(objects);
+	    Surface.array_set(objs, i, objects[i]);
+	SELF.set_objects(objs);
 	return SELF;
     }
 
@@ -126,7 +134,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
 	var objs = SELF.objects;
 	for ( var idx=0, limit=SELF.length ; idx < limit ; idx++ ) {
-	    var tmp = Surface.intersect(objs + idx*Surface.SIZE, eye, ray, min, max);
+	    var tmp = Surface.intersect(Surface.array_get(objs,idx), eye, ray, min, max);
 	    var obj = tmp.obj;
 	    var dist = tmp.dist;
 	    if (obj)
@@ -178,6 +186,9 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 } @end
 
 @flatjs class Triangle extends Surface {
+    v1: Vec3
+    v2: Vec3
+    v3: Vec3
 
     @method init(SELF, material, v1, v2, v3) {
 	Surface.init(SELF, material)
@@ -247,7 +258,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     // Not a hot function
     @method setColor(SELF, y, x, v) {
-	int32.array_set(SELF.data, (SELF.height-y)*SELF.width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
+	int32.array_set(SELF.data, (SELF.height-y-1)*SELF.width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
     }
 } @end
 
@@ -256,7 +267,7 @@ const g_right = 2;
 const g_top = 1.5;
 const g_bottom = -1.5;
 
-const bits = Bitmap_init(@new Bitmap, height, width, DL3(152.0/256.0, 251.0/256.0, 152.0/256.0));
+const bits = Bitmap.init(@new Bitmap, height, width, DL3(152.0/256.0, 251.0/256.0, 152.0/256.0));
 
 function main() {
 
@@ -276,7 +287,7 @@ function main() {
     // FIXME: will set() work properly?
     // TODO: This operation, extracting a typed array from raw memory at an address,
     // could usefully be added to libflatjs, to avoid dealing with RAW_MEMORY.
-    id.data.set(new SharedUint8Array(RAW_MEMORY, Bitmap_data(bits), width*height*4));
+    id.data.set(new Uint8Array(RAW_MEMORY, Bitmap.data(bits), width*height*4));
     cx.putImageData( id, 0, 0 );
     document.getElementById("mycaption").innerHTML = "Time=" + (now - then) + "ms";
 
@@ -370,7 +381,7 @@ function traceWithoutAntialias(hmin, hlim) {
 	    var v = g_bottom + (g_top - g_bottom)*(h + 0.5)/height;
 	    var ray = DL3(u, v, -eye.z);
 	    var col = raycolor(eye, ray, 0, SENTINEL, reflection_depth);
-	    bits.setColor(h, w, col);
+	    Bitmap.setColor(bits, h, w, col);
 	}
     }
 }
@@ -403,7 +414,7 @@ function traceWithAntialias(hmin, hlim) {
 		    c = add(c, raycolor(eye, ray, 0.0, SENTINEL, reflection_depth));
 		}
 	    }
-	    bits.setColor(h,w,divi(c,n*n));
+	    Bitmap.setColor(bits, h,w,divi(c,n*n));
 	}
     }
 }
@@ -432,7 +443,7 @@ function raycolor(eye, ray, t0, t1, depth) {
 	// since any hit will do, but does not seem to have much of an effect in scenes tested
 	// so far - maybe not enough scene detail (too few shadows).
 	if (shadows) {
-	    var tmp = world.intersect(add(p, muli(l1, EPS)), l1, EPS, SENTINEL);
+	    var tmp = Surface.intersect(world, add(p, muli(l1, EPS)), l1, EPS, SENTINEL);
 	    min_obj = tmp.obj;
 	}
 	if (!min_obj) {
