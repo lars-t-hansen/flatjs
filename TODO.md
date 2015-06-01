@@ -5,8 +5,12 @@
 * v1 targeted issues
 * Generate ES that runs in all major current browsers (consider that
   splat may not be implemented everywhere, for example).  This
-  means some ES5+ dialect, likely.
+  means some ES5+ dialect, likely.  Test at least the ray tracer
+  in all browsers.
 * This list could go into the wiki section of the repo.
+* Check that one-liners a la this work correctly:
+    @method intersect(SELF, eye, ray, min, max) { throw "Pure: Surface.intersect" }
+
 
 ## Language ideas to investigate
 
@@ -95,7 +99,7 @@
   slippery slope to add enums and compile-time constants (which would
   be necessary for in-line arrays with symbolically defined lengths,
   "@flatjs const x = 10").  Sliding further, constant expressions.
-  Sliding further still, type aliases: @type X = int32.atomic.Array,
+  Sliding further still, type aliases: @flatjs type X = int32.atomic.Array,
   then X.set() and X.get().
 * String types, maybe?  Easy enough to define a SharedString class
   that references an underlying array, probably.  Doing so would get
