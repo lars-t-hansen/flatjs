@@ -902,12 +902,6 @@ function pasteupTypes():void {
 
 	    // Now do vtable, if appropriate.
 
-	    // Issue 2: instead of using ...args we really must use a
-	    // signature from one of the method defs, but it's tricky
-	    // since we may have to strip annotations, and there's
-	    // also a question about rest arguments.  (Not to mention
-	    // the arguments object.)
-
 	    // TODO: better error message?
 
 	    if (d.kind == DefnKind.Class) {
@@ -1123,6 +1117,7 @@ function accMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
 	return nomatch;
     };
 
+    // Issue #16: Watch it: Parens interact with semicolon insertion.
     let ref = `(${expandMacrosIn(endstrip(as[0]))} + ${fld.offset})`;
     if (operation == "ref_") {
 	return [left + ref + s.substring(pp.where),
@@ -1202,7 +1197,7 @@ function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:str
 	default:
 	    throw new Error("Internal: No operator: " + operation);
 	}
-	// This is deeply troubling, but parens interact with semicolon insertion.
+	// Issue #16: Parens interact with semicolon insertion.
 	//expr = `(${expr})`;
 	return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
@@ -1224,7 +1219,7 @@ function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:str
 	}
 	if (expr == "")
 	    return nomatch;	// Issue 6: Warning desired
-	// See above
+	// Issue #16: Parens interact with semicolon insertion.
 	//expr = `(${expr})`;
 	return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
@@ -1275,7 +1270,7 @@ function arrMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
 	let fld = (<StructDefn> type).findAccessibleFieldFor(operation, field);
 	if (!fld)
 	    return nomatch;
-	// WARNING: parens, again
+	// Issue #16: Watch it: Parens interact with semicolon insertion.
 	ref = "(" + ref + "+" + fld.offset + ")";
 	type = fld.type;
     }
@@ -1295,6 +1290,7 @@ function newMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
 	if (!t)
 	    throw new Error("Unknown type argument to @new: " + classType);
 	// NOTE, parens removed here
+	// Issue #16: Watch it: Parens interact with semicolon insertion.
 	let expr = classType + ".initInstance(FlatJS.allocOrThrow(" + t.size + "," + t.align + "))";
 	return [left + expr + s.substring(p + m.length),
 		left.length + expr.length ];
@@ -1309,6 +1305,7 @@ function newMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
     if (!t)
 	throw new Error("Unknown type argument to @new array: " + arrayType);
     // NOTE, parens removed here
+    // Issue #16: Watch it: Parens interact with semicolon insertion.
     let expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.elementAlign + ")";
     return [left + expr + s.substring(pp.where),
 	    left.length + expr.length];
