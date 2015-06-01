@@ -4,6 +4,21 @@ load("../libflatjs.js");
 var ab = new ArrayBuffer(1024);
 FlatJS.init(ab, true);
 
+// Basic ideas
+
+assertEq(int8.SIZE, 1);
+assertEq(int16.SIZE, 2);
+assertEq(int32.SIZE, 4);
+
+assertEq(uint8.SIZE, 1);
+assertEq(uint16.SIZE, 2);
+assertEq(uint32.SIZE, 4);
+
+assertEq(float32.SIZE, 4);
+assertEq(float64.SIZE, 8);
+
+// Basic classes
+
 @flatjs class Point {
     x:int32
     y:int32
@@ -27,6 +42,10 @@ assertEq(Point.y(p), 20);
 assertEq(FlatJS.identify(p), Point);
 assertEq(Point.CLSID, _mem_int32[p>>2]); // White-box, layout
 
+assertEq(Point.ref_x(p) + int32.SIZE, Point.ref_y(p)); // Gray-box, layout
+
+// Basic inheritance
+
 @flatjs class Point3D extends Point {
     z:int32
 
@@ -37,7 +56,7 @@ assertEq(Point.CLSID, _mem_int32[p>>2]); // White-box, layout
 	return SELF;
     }
 
-    @method deep6(SELF) {
+    @method deep6(SELF) {	// Override
 	SELF.set_z(-SELF.z);
     }
 } @end
@@ -48,14 +67,23 @@ assertEq(Point.y(q), 7);
 assertEq(Point3D.x(q), 5);
 assertEq(Point3D.y(q), 7);
 assertEq(Point3D.z(q), 8);
-Point3D.deep6(q);
+
+// Virtual calls
+
+Point3D.deep6(q);		// Invoke Point3D.deep6
 assertEq(Point3D.x(q), 5);
 assertEq(Point3D.y(q), 7);
 assertEq(Point3D.z(q), -8);
+
 Point.deep6(q);			// Virtual, so invoke Point3D.deep6
 assertEq(Point3D.x(q), 5);
 assertEq(Point3D.y(q), 7);
 assertEq(Point3D.z(q), 8);
+
+assertEq(FlatJS.identify(q), Point3D);
+assertEq(Point3D.BASE, Point);
+
+// Structures
 
 @flatjs struct Pair {
     x:float64;
@@ -73,6 +101,8 @@ assertEq(Point3D.z(q), 8);
 assertEq(Pair.SIZE, 16);
 assertEq(Pair.ALIGN, 8);	// White-box, it could be larger
 
+// Structure fields within classes
+
 @flatjs class PairBox {
     pad1:float32;
     pad2:float64;
@@ -87,6 +117,12 @@ PairBox.set_p_y(pr, 20);
 PairBox.set_pad1(pr, 1);
 PairBox.set_pad2(pr, 2);
 PairBox.set_pad3(pr, 3);
+
+assertEq(PairBox.ref_pad1(pr), pr+4); // White-box, layout
+
+var ppr = PairBox.ref_p(pr);
+assertEq(Pair.ref_x(ppr) - ppr, 0); // Well-defined
+assertEq(Pair.ref_y(ppr) - ppr, 8); // White-box, it could be larger though shouldn't
 
 assertEq(PairBox.p_x(pr), 10);
 assertEq(PairBox.p_y(pr), 20);
