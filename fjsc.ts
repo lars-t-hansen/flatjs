@@ -151,21 +151,27 @@ class ClassDefn extends UserDefn {
 }
 
 class Virtual {
-    constructor(public name:string, public reverseCases: SMap<number[]>, public default_:string) {}
+    constructor(public name:string, private sign:string[], public reverseCases: SMap<number[]>, public default_:string) {}
+
+    signature():string {
+	if (this.sign == null)
+	    return ", ...args";
+	return ", " + this.sign.join(",");
+    }
 }
 
-class VirtualMethodNameIterator {
+class VirtualMethodIterator {
     private i = 0;
     private inherited = false;
     private filter = new SSet();
 
     constructor(private cls:ClassDefn) {}
 
-    next(): [string,boolean] {
+    next(): [string,string[],boolean] {
 	for (;;) {
 	    if (this.i == this.cls.methods.length) {
 		if (!this.cls.baseTypeRef)
-		    return ["", false];
+		    return ["", null, false];
 		this.i = 0;
 		this.cls = this.cls.baseTypeRef;
 		this.inherited = true;
@@ -179,7 +185,7 @@ class VirtualMethodNameIterator {
 	    if (this.filter.test(m.name))
 		continue;
 	    this.filter.put(m.name);
-	    return [m.name, this.inherited];
+	    return [m.name, m.signature, this.inherited];
 	}
     }
 }
@@ -254,7 +260,7 @@ enum MethodKind {
 }
 
 class Method {
-    constructor(public line:number, public kind:MethodKind, public name:string, public body: string[]) {}
+    constructor(public line:number, public kind:MethodKind, public name:string, public signature:string[], public body: string[]) {}
 }
 
 class MapEntry {
@@ -444,6 +450,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	let mbody:string[] = null;
 	let method_type = MethodKind.Virtual;
 	let method_name = "";
+	let method_signature:string[] = null;
 
 	// Do not check for duplicate names here since that needs to
 	// take into account inheritance.
@@ -454,21 +461,31 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		break;
 	    if (m = method_re.exec(l)) {
 		if (in_method)
-		    methods.push(new Method(i, method_type, method_name, mbody));
+		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
 		in_method = true;
 		method_type = MethodKind.Virtual;
 		method_name = m[1];
+		// Try to parse the signature.  Just use the param parser for now,
+		// this will sometimes fail, notably for '...arg' and maybe for
+		// annotations.
+		//
+		// FIXME: Use a better parser, this is gross.
+		let pp = new ParamParser(m[2], /* skip left paren */ 1);
+		let args = pp.allArgs();
+		args.shift();	               // Discard SELF
+		method_signature = args;
 		mbody = [m[2]];
 	    }
 	    else if (m = special_re.exec(l)) {
 		if (in_method)
-		    methods.push(new Method(i, method_type, method_name, mbody));
+		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
 		in_method = true;
 		switch (m[1]) {
 		case "get": method_type = MethodKind.Get; break;
 		case "set": method_type = MethodKind.Set; break;
 		}
 		method_name = "";
+		method_signature = null;
 		mbody = [m[2]];
 	    }
 	    else if (in_method) {
@@ -496,7 +513,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		throw new Error(filename + ":" + i + ": Syntax error: Not a property or method: " + l);
 	}
 	if (in_method)
-	    methods.push(new Method(i, method_type, method_name, mbody));
+	    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
 
 	if (kind == "class")
 	    defs.push(new ClassDefn(filename, lineno, name, inherit, properties, methods, nlines.length));
@@ -761,8 +778,8 @@ function createVirtuals():void {
 
 function createVirtualsFor(cls: ClassDefn): void {
     let vtable:Virtual[] = [];
-    let mnames = new VirtualMethodNameIterator(cls);
-    for ( let [mname, isInherited] = mnames.next() ; mname != "" ; [mname, isInherited] = mnames.next() ) {
+    let virts = new VirtualMethodIterator(cls);
+    for ( let [mname, sign, isInherited] = virts.next() ; mname != "" ; [mname, sign, isInherited] = virts.next() ) {
 	let reverseCases = new SMap<number[]>();
 	let subs = new InclusiveSubclassIterator(cls);
 	for ( let subcls = subs.next() ; subcls ; subcls = subs.next() ) {
@@ -776,7 +793,7 @@ function createVirtualsFor(cls: ClassDefn): void {
 	let def:string = null;
 	if (isInherited && cls.baseTypeRef)
 	    def = findMethodImplFor(cls.baseTypeRef, null, mname);
-	vtable.push(new Virtual(mname, reverseCases, def));
+	vtable.push(new Virtual(mname, sign, reverseCases, def));
     }
     cls.vtable = vtable;
 }
@@ -883,16 +900,19 @@ function pasteupTypes():void {
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
 		for ( let virtual of cls.vtable ) {
-		    nlines.push(virtual.name + ": function (SELF, ...args) {");
+		    let signature = virtual.signature();
+		    nlines.push(`${virtual.name} : function (SELF ${signature}) {`);
 		    nlines.push("  switch (_mem_int32[SELF>>2]) {");
 		    let kv = virtual.reverseCases.keysValues();
 		    for ( let [name,cases]=kv.next() ; name ; [name,cases]=kv.next() ) {
 			for ( let c of cases )
-			    nlines.push("    case " + c + ": ");
-			nlines.push("      return " + name + "(SELF, ...args);");
+			    nlines.push(`    case ${c}: `);
+			nlines.push(`      return ${name}(SELF ${signature});`);
 		    }
 		    nlines.push("    default:");
-		    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(SELF, ...args)") : "throw FlatJS._badType(SELF)") + ";");
+		    nlines.push("      " + (virtual.default_ ?
+					    `return ${virtual.default_}(SELF ${signature})` :
+					    "throw FlatJS._badType(SELF)") + ";");
 		    nlines.push("  }");
 		    nlines.push("},");
 		}
@@ -960,6 +980,24 @@ class ParamParser {
 
     constructor(private input:string, private pos:number) {
 	this.lim = input.length;
+    }
+
+    skipLeadingComma():void {
+	if (this.done)
+	    return;
+	while (this.pos < this.lim) {
+	    switch (this.input.charAt(this.pos++)) {
+	    case ',':
+		return;
+	    case ' ':
+	    case '\t':
+	    case '\n':
+	    case '\r':
+		break;
+	    default:
+		return;
+	    }
+	}
     }
 
     // Returns null on failure to find a next argument

@@ -182,25 +182,31 @@ var ClassDefn = (function (_super) {
     return ClassDefn;
 })(UserDefn);
 var Virtual = (function () {
-    function Virtual(name, reverseCases, default_) {
+    function Virtual(name, sign, reverseCases, default_) {
         this.name = name;
+        this.sign = sign;
         this.reverseCases = reverseCases;
         this.default_ = default_;
     }
+    Virtual.prototype.signature = function () {
+        if (this.sign == null)
+            return ", ...args";
+        return ", " + this.sign.join(",");
+    };
     return Virtual;
 })();
-var VirtualMethodNameIterator = (function () {
-    function VirtualMethodNameIterator(cls) {
+var VirtualMethodIterator = (function () {
+    function VirtualMethodIterator(cls) {
         this.cls = cls;
         this.i = 0;
         this.inherited = false;
         this.filter = new SSet();
     }
-    VirtualMethodNameIterator.prototype.next = function () {
+    VirtualMethodIterator.prototype.next = function () {
         for (;;) {
             if (this.i == this.cls.methods.length) {
                 if (!this.cls.baseTypeRef)
-                    return ["", false];
+                    return ["", null, false];
                 this.i = 0;
                 this.cls = this.cls.baseTypeRef;
                 this.inherited = true;
@@ -214,10 +220,10 @@ var VirtualMethodNameIterator = (function () {
             if (this.filter.test(m.name))
                 continue;
             this.filter.put(m.name);
-            return [m.name, this.inherited];
+            return [m.name, m.signature, this.inherited];
         }
     };
-    return VirtualMethodNameIterator;
+    return VirtualMethodIterator;
 })();
 var InclusiveSubclassIterator = (function () {
     function InclusiveSubclassIterator(cls) {
@@ -293,10 +299,11 @@ var MethodKind;
     MethodKind[MethodKind["Set"] = 2] = "Set";
 })(MethodKind || (MethodKind = {}));
 var Method = (function () {
-    function Method(line, kind, name, body) {
+    function Method(line, kind, name, signature, body) {
         this.line = line;
         this.kind = kind;
         this.name = name;
+        this.signature = signature;
         this.body = body;
     }
     return Method;
@@ -490,6 +497,7 @@ function collectDefinitions(filename, lines) {
         var mbody = null;
         var method_type = MethodKind.Virtual;
         var method_name = "";
+        var method_signature = null;
         // Do not check for duplicate names here since that needs to
         // take into account inheritance.
         while (i < lim) {
@@ -498,15 +506,24 @@ function collectDefinitions(filename, lines) {
                 break;
             if (m = method_re.exec(l)) {
                 if (in_method)
-                    methods.push(new Method(i, method_type, method_name, mbody));
+                    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
                 in_method = true;
                 method_type = MethodKind.Virtual;
                 method_name = m[1];
+                // Try to parse the signature.  Just use the param parser for now,
+                // this will sometimes fail, notably for '...arg' and maybe for
+                // annotations.
+                //
+                // FIXME: Use a better parser.
+                var pp = new ParamParser(m[2], 1); // Hacky, 0 is wrong-but-right
+                var args = pp.allArgs();
+                args.shift();
+                method_signature = args;
                 mbody = [m[2]];
             }
             else if (m = special_re.exec(l)) {
                 if (in_method)
-                    methods.push(new Method(i, method_type, method_name, mbody));
+                    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
                 in_method = true;
                 switch (m[1]) {
                     case "get":
@@ -517,6 +534,7 @@ function collectDefinitions(filename, lines) {
                         break;
                 }
                 method_name = "";
+                method_signature = null;
                 mbody = [m[2]];
             }
             else if (in_method) {
@@ -548,7 +566,7 @@ function collectDefinitions(filename, lines) {
                 throw new Error(filename + ":" + i + ": Syntax error: Not a property or method: " + l);
         }
         if (in_method)
-            methods.push(new Method(i, method_type, method_name, mbody));
+            methods.push(new Method(i, method_type, method_name, method_signature, mbody));
         if (kind == "class")
             defs.push(new ClassDefn(filename, lineno, name_1, inherit, properties, methods, nlines.length));
         else
@@ -801,8 +819,8 @@ function createVirtuals() {
 */
 function createVirtualsFor(cls) {
     var vtable = [];
-    var mnames = new VirtualMethodNameIterator(cls);
-    for (var _a = mnames.next(), mname = _a[0], isInherited = _a[1]; mname != ""; (_b = mnames.next(), mname = _b[0], isInherited = _b[1], _b)) {
+    var virts = new VirtualMethodIterator(cls);
+    for (var _a = virts.next(), mname = _a[0], sign = _a[1], isInherited = _a[2]; mname != ""; (_b = virts.next(), mname = _b[0], sign = _b[1], isInherited = _b[2], _b)) {
         var reverseCases = new SMap();
         var subs = new InclusiveSubclassIterator(cls);
         for (var subcls = subs.next(); subcls; subcls = subs.next()) {
@@ -816,7 +834,7 @@ function createVirtualsFor(cls) {
         var def = null;
         if (isInherited && cls.baseTypeRef)
             def = findMethodImplFor(cls.baseTypeRef, null, mname);
-        vtable.push(new Virtual(mname, reverseCases, def));
+        vtable.push(new Virtual(mname, sign, reverseCases, def));
     }
     cls.vtable = vtable;
     var _b;
@@ -921,7 +939,8 @@ function pasteupTypes() {
                 var cls = d;
                 for (var _d = 0, _e = cls.vtable; _d < _e.length; _d++) {
                     var virtual = _e[_d];
-                    nlines.push(virtual.name + ": function (SELF, ...args) {");
+                    var signature = virtual.signature();
+                    nlines.push(virtual.name + " : function (SELF " + signature + ") {");
                     nlines.push("  switch (_mem_int32[SELF>>2]) {");
                     var kv = virtual.reverseCases.keysValues();
                     for (var _f = kv.next(), name_3 = _f[0], cases = _f[1]; name_3; (_g = kv.next(), name_3 = _g[0], cases = _g[1], _g)) {
@@ -929,10 +948,12 @@ function pasteupTypes() {
                             var c = cases[_h];
                             nlines.push("    case " + c + ": ");
                         }
-                        nlines.push("      return " + name_3 + "(SELF, ...args);");
+                        nlines.push("      return " + name_3 + "(SELF " + signature + ");");
                     }
                     nlines.push("    default:");
-                    nlines.push("      " + (virtual.default_ ? ("return " + virtual.default_ + "(SELF, ...args)") : "throw FlatJS._badType(SELF)") + ";");
+                    nlines.push("      " + (virtual.default_ ?
+                        "return " + virtual.default_ + "(SELF " + signature + ")" :
+                        "throw FlatJS._badType(SELF)") + ";");
                     nlines.push("  }");
                     nlines.push("},");
                 }
@@ -994,6 +1015,23 @@ var ParamParser = (function () {
         this.done = false;
         this.lim = input.length;
     }
+    ParamParser.prototype.skipLeadingComma = function () {
+        if (this.done)
+            return;
+        while (this.pos < this.lim) {
+            switch (this.input.charAt(this.pos++)) {
+                case ',':
+                    return;
+                case ' ':
+                case '\t':
+                case '\n':
+                case '\r':
+                    break;
+                default:
+                    return;
+            }
+        }
+    };
     // Returns null on failure to find a next argument
     ParamParser.prototype.nextArg = function () {
         if (this.done)
