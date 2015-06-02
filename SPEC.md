@@ -1,59 +1,67 @@
 # FlatJS
 
-23 May 2015 / lhansen@mozilla.com
-
 ## Introduction
 
-FlatJS is a simple language that is currently layered on, but can
-eventually be embedded in, Javascript.
+FlatJS is a "language fragment" layered on JavaScript (and JS dialects)
+that allows programs to use flat memory (ArrayBuffer and SharedArrayBuffer)
+conveniently with good performance.
 
-The purpose of FlatJS is to allow JS programs to use ArrayBuffer and
-SharedArrayBuffer memory somewhat conveniently and with high
-performance by layering structured types onto flat memory.
+FlatJS provides structs, classes, and arrays within flat memory, as well
+as atomic and synchronic fields when using shared memory.  There is also
+some support for SIMD values.  Objects in flat memory are manually
+managed and represented in JavaScript as pointers into the shared
+memory (ie, integer addresses), not as native JavaScript objects.
+Virtual methods are provided for on class instances.
 
-In addition to primitive value types (int8, etc), FlatJS has compound
-reference types (classes with single inheritance) and value types
-(structures) with named and typed fields and some simple method
-facilities.  There are also arrays of all those types.  Methods on
-classes are currently always virtual.  Macros sweeten the syntax
-further.
-
-Objects in flat memory are represented in JS by their pointer values,
-ie, as integer byte offsets into a single heap.  That is a weak
-representation, but it is more performant than allocating and managing
-front objects, and right now performance is the main focus of this
-exercise.
-
-Also for performance reasons the language is fairly static and is
-implemented by means of a rewriter that performs extensive in-line
-expansion.  There are few dynamic features beyond virtual methods on
-FlatJS class instances.  All memory management is manual.
-
-For ease of processing *only*, the syntax is currently line-oriented:
-Line breaks are explicit in the grammars below and some "@" characters
-appear here and there to make recognition easier.  Please don't get
-hung up on this, it's just a matter of programming to fix it but this
-is not my focus right now.
+FlatJS is a fairly static language and is implemented as a preprocessor
+that translates  JavaScript+FlatJS into plain JavaScript.
 
 The following is the bare specification.  Full programs are in test/
 and demo/.
 
+## Caveats
+
+For ease of processing *only*, the syntax is currently line-oriented:
+Line breaks are explicit in the grammars below and some "@" characters
+appear here and there to make recognition easier.  Please don't get
+hung up on this, it's mostly a matter of programming to fix it but that
+is not my focus right now.
+
+## Programs
+
+A program comprises a set of files that are processed together by the FlatJS
+compiler.  In a Web context, all the files loaded into a tab, or all the files
+loaded into a worker, would normally be processed together.
+
+## Types
+
+There is a program-wide namespace for FlatJS types.  This namespace contains
+the predefined primitive types and every user-defined (struct or class) type.
+Type names in a program must be unique in this namespace.
+
+Every type that is referenced from an annotation or as a base type must be
+defined in the set of files processed together.  Types can be defined in any
+order and in any file of the program.
+
+Within the bodies of methods, 'this' has an undetermined binding (for now)
+and should not be referenced.
 
 ## Primitive types
 
-There are global objects with the following names:
-  int8, uint8, int16, uint16, int32, uint32, float32, float64,
-  int32x4, float32x4, float64x2
+There are predefined global type objects with the following names: *int8*, *uint8*,
+*int16*, *uint16*, *int32*, *uint32*, *float32*, *float64*, *int32x4*,
+*float32x4*, and *float64x2*.
 
-Each of these objects have two properties:
-  SIZE => the size in bytes of the type
-  ALIGN => the required alignment for the type
+Each predefined type object has three properties:
 
+* NAME is the name of the type (a string)
+* SIZE is the size in bytes of the type
+* ALIGN is the required alignment for the type
 
 ## Struct types
 
-A struct describes a value type (instances do not have object
-identity) with named, mutable fields.
+A struct describes a value type (instances do not have object identity)
+with named, mutable fields.
 
 ### Syntax
 
@@ -84,37 +92,24 @@ identity) with named, mutable fields.
   Id ::= [A-Za-z][A-Za-z0-9]*
 ```
 
-NOTE: Underscore is not a legal character in an Id.  That is because
-      the underscore is used as part of the macro syntax.
+Note the following:
 
-NOTE: The annotation on the Parameter is not used by FlatJS, but is
-      allowed in order to interoperate with TypeScript.
-
-NOTE: The restriction of properties before methods is a matter of
-      economizing on the markup; as it is, properties don't need eg
-      "@var" before them.  This restriction can be lifted once we have
-      a real parser.
+* Underscore is not currently a legal character in an Id.  That is because the
+  underscore is used as part of the macro syntax.
+* The annotation on the Parameter is not used by FlatJS, but is allowed in order
+  to interoperate with TypeScript.
+* The restriction of properties before methods is a matter of economizing on the
+  markup; as it is, properties don't need eg ```@var``` before them.  This restriction
+  can be lifted once we have a better parser, see Issue #11.
 
 
 ### Static semantics
 
-There is a program-wide namespace for FlatJS types; the Id naming
-the struct must be unique within that namespace.
-
-A named field type must be defined somewhere in the set of translation
-units that are processed together.
+Fields within a user-defined type must have names unique within that type.
+Every field name must be unique within the struct.
 
 The struct type must not reference itself directly or indirectly via a
 chain of struct-typed fields.
-
-Every field name must be unique within the struct.
-
-Within the bodies of @get and @set, 'this' has an undetermined
-binding (for now) and should not be referenced.
-
-NOTE: The meaning of 'this' will be nailed down and will either be the
-      global object, or the object representing the type being
-      defined.
 
 
 ### Translation
