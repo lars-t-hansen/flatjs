@@ -554,8 +554,8 @@ function collectDefinitions(filename, lines) {
                 var pp = new ParamParser(filename, i, m[2], 1);
                 var args = pp.allArgs();
                 args.shift(); // Discard SELF
-                // TODO: In principle there are two signatures here: there is the
-                // parameter signature, which we could/should keep intact in the
+                // Issue #15: In principle there are two signatures here: there is the
+                // parameter signature, which we should keep intact in the
                 // virtual, and there is the set of arguments extracted from that,
                 // including any splat.
                 method_signature = args.map(function (x) { return parameterToArgument(filename, i, x); });
@@ -899,12 +899,12 @@ function findMethodImplFor(cls, stopAt, name) {
         return findMethodImplFor(cls.baseTypeRef, stopAt, name);
     throw new InternalError("Method not found: " + name);
 }
-// TODO: This will also match bogus things like XSELF. because there's
-// no lookbehind.
+// Issue #17: This will also match bogus things like XSELF, because
+// there's no reliable left-context handling.  Need to add
+// programmatic guards for that.
 var self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
 var self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
-// TODO: really should check validity of the name here, not hard to do.
-// Can fall back on that happening on the next pass probably.
+// Name validity will be checked on the next expansion pass.
 function expandSelfAccessors() {
     for (var _i = 0; _i < userTypes.length; _i++) {
         var t = userTypes[_i];
@@ -980,7 +980,6 @@ function pasteupTypes() {
                 nlines.push(","); // Gross hack, but if a comment is the last line of the body then necessary
             }
             // Now do vtable, if appropriate.
-            // TODO: better error message?
             if (d.kind == DefnKind.Class) {
                 var cls = d;
                 for (var _d = 0, _e = cls.vtable; _d < _e.length; _d++) {
@@ -1089,8 +1088,8 @@ var ParamParser = (function () {
             return null;
         var depth = 0;
         var start = this.pos;
-        // Issue 8: Really should handle regular expressions, but much harder, and somewhat marginal
-        // Issue 7: Really should handle /* .. */ comments
+        // Issue #7: Really should handle /* .. */ comments
+        // Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
         while (this.pos < this.lim) {
             switch (this.input.charAt(this.pos++)) {
                 case ',':
@@ -1115,7 +1114,7 @@ var ParamParser = (function () {
                     break;
                 case '\'':
                 case '"':
-                    // Issue 5: implement this
+                    // Issue #5: implement string support
                     throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
             }
         }
@@ -1178,7 +1177,7 @@ function accMacro(file, line, s, p, ms) {
         //console.log("No match for " + className + "  " + operation + "  " + propName);
         return nomatch;
     }
-    // Issue 6: Emit warnings for arity abuse, at a minimum.
+    // Issue #6: Emit warnings for arity abuse, at a minimum.
     var pp = new ParamParser(file, line, s, p + m.length);
     var as = (pp).allArgs();
     if (OpAttr[operation].arity != as.length) {
@@ -1283,7 +1282,7 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
                 break;
         }
         if (expr == "")
-            return nomatch; // Issue 6: Warning desired
+            return nomatch; // Issue #6: Warning desired
         // Issue #16: Parens interact with semicolon insertion.
         //expr = `(${expr})`;
         return [left + expr + s.substring(pp.where), left.length + expr.length];
@@ -1306,7 +1305,7 @@ function arrMacro(file, line, s, p, ms) {
         return nomatch;
     var pp = new ParamParser(file, line, s, p + m.length);
     var as = (pp).allArgs();
-    // Issue 6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
+    // Issue #6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
     // FIXME: atomics on fields of structs within array, syntax would be
     // T.array_add_x(p,v), T.array_expectUpdate_y(p, v, t).
     switch (operation) {
@@ -1377,6 +1376,8 @@ function findType(name) {
 // This can also check if x is already properly parenthesized, though that
 // involves counting parens, at least trivially (and then does it matter?).
 // Consider (a).(b), which should be parenthesized as ((a).(b)).
+//
+// Issue #16: Parentheses are not actually reliable.
 function endstrip(x) {
     if (/^[a-zA-Z0-9]+$/.test(x))
         return x;

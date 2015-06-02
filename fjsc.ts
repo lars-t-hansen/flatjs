@@ -504,8 +504,8 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		let pp = new ParamParser(filename, i, m[2], /* skip left paren */ 1);
 		let args = pp.allArgs();
 		args.shift();	               // Discard SELF
-		// TODO: In principle there are two signatures here: there is the
-		// parameter signature, which we could/should keep intact in the
+		// Issue #15: In principle there are two signatures here: there is the
+		// parameter signature, which we should keep intact in the
 		// virtual, and there is the set of arguments extracted from that,
 		// including any splat.
 		method_signature = args.map(function (x) { return parameterToArgument(filename, i, x) });
@@ -856,14 +856,14 @@ function findMethodImplFor(cls:ClassDefn, stopAt:ClassDefn, name:string):string 
 }
 
 
-// TODO: This will also match bogus things like XSELF. because there's
-// no lookbehind.
+// Issue #17: This will also match bogus things like XSELF, because
+// there's no reliable left-context handling.  Need to add
+// programmatic guards for that.
 
 const self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
 const self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
 
-// TODO: really should check validity of the name here, not hard to do.
-// Can fall back on that happening on the next pass probably.
+// Name validity will be checked on the next expansion pass.
 
 function expandSelfAccessors():void {
     for ( var t of userTypes ) { // ES6 required for 'let' here
@@ -935,8 +935,6 @@ function pasteupTypes():void {
 	    }
 
 	    // Now do vtable, if appropriate.
-
-	    // TODO: better error message?
 
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
@@ -1053,8 +1051,8 @@ class ParamParser {
 	    return null;
 	let depth = 0;
 	let start = this.pos;
-	// Issue 8: Really should handle regular expressions, but much harder, and somewhat marginal
-	// Issue 7: Really should handle /* .. */ comments
+	// Issue #7: Really should handle /* .. */ comments
+	// Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
 	while (this.pos < this.lim) {
 	    switch (this.input.charAt(this.pos++)) {
 	    case ',':
@@ -1079,7 +1077,7 @@ class ParamParser {
 		break;
 	    case '\'':
 	    case '"':
-		// Issue 5: implement this
+		// Issue #5: implement string support
 		throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
 	    }
 	}
@@ -1148,7 +1146,7 @@ function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
 	return nomatch;
     }
 
-    // Issue 6: Emit warnings for arity abuse, at a minimum.
+    // Issue #6: Emit warnings for arity abuse, at a minimum.
 
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
@@ -1259,7 +1257,7 @@ function loadFromRef(file:string, line:number,
 	    break;
 	}
 	if (expr == "")
-	    return nomatch;	// Issue 6: Warning desired
+	    return nomatch;	// Issue #6: Warning desired
 	// Issue #16: Parens interact with semicolon insertion.
 	//expr = `(${expr})`;
 	return [left + expr + s.substring(pp.where), left.length + expr.length];
@@ -1288,7 +1286,7 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
 
-    // Issue 6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
+    // Issue #6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
 
     // FIXME: atomics on fields of structs within array, syntax would be
     // T.array_add_x(p,v), T.array_expectUpdate_y(p, v, t).
@@ -1361,6 +1359,8 @@ function findType(name:string):Defn {
 // This can also check if x is already properly parenthesized, though that
 // involves counting parens, at least trivially (and then does it matter?).
 // Consider (a).(b), which should be parenthesized as ((a).(b)).
+//
+// Issue #16: Parentheses are not actually reliable.
 
 function endstrip(x:string):string {
     if (/^[a-zA-Z0-9]+$/.test(x))
