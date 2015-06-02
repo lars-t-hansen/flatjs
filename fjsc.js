@@ -507,6 +507,8 @@ function collectDefinitions(filename, lines) {
             if (end_re.test(l))
                 break;
             if (m = method_re.exec(l)) {
+                if (kind != "class")
+                    throw new Error("@method is only allowed in classes");
                 if (in_method)
                     methods.push(new Method(i, method_type, method_name, method_signature, mbody));
                 in_method = true;
@@ -525,6 +527,8 @@ function collectDefinitions(filename, lines) {
                 mbody = [m[2]];
             }
             else if (m = special_re.exec(l)) {
+                if (kind != "struct")
+                    throw new Error("@" + m[1] + " is only allowed in structs");
                 if (in_method)
                     methods.push(new Method(i, method_type, method_name, method_signature, mbody));
                 in_method = true;
@@ -941,11 +945,6 @@ function pasteupTypes() {
                 nlines.push(","); // Gross hack, but if a comment is the last line of the body then necessary
             }
             // Now do vtable, if appropriate.
-            // Issue 2: instead of using ...args we really must use a
-            // signature from one of the method defs, but it's tricky
-            // since we may have to strip annotations, and there's
-            // also a question about rest arguments.  (Not to mention
-            // the arguments object.)
             // TODO: better error message?
             if (d.kind == DefnKind.Class) {
                 var cls = d;
@@ -1147,6 +1146,7 @@ function accMacro(s, p, ms) {
         return nomatch;
     }
     ;
+    // Issue #16: Watch it: Parens interact with semicolon insertion.
     var ref = "(" + expandMacrosIn(endstrip(as[0])) + " + " + fld.offset + ")";
     if (operation == "ref_") {
         return [left + ref + s.substring(pp.where),
@@ -1222,7 +1222,7 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, rhs2, nomatch) {
             default:
                 throw new Error("Internal: No operator: " + operation);
         }
-        // This is deeply troubling, but parens interact with semicolon insertion.
+        // Issue #16: Parens interact with semicolon insertion.
         //expr = `(${expr})`;
         return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
@@ -1244,7 +1244,7 @@ function loadFromRef(ref, type, s, left, operation, pp, rhs, rhs2, nomatch) {
         }
         if (expr == "")
             return nomatch; // Issue 6: Warning desired
-        // See above
+        // Issue #16: Parens interact with semicolon insertion.
         //expr = `(${expr})`;
         return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
@@ -1294,7 +1294,7 @@ function arrMacro(s, p, ms) {
         var fld = type.findAccessibleFieldFor(operation, field);
         if (!fld)
             return nomatch;
-        // WARNING: parens, again
+        // Issue #16: Watch it: Parens interact with semicolon insertion.
         ref = "(" + ref + "+" + fld.offset + ")";
         type = fld.type;
     }
@@ -1311,6 +1311,7 @@ function newMacro(s, p, ms) {
         if (!t_1)
             throw new Error("Unknown type argument to @new: " + classType);
         // NOTE, parens removed here
+        // Issue #16: Watch it: Parens interact with semicolon insertion.
         var expr_1 = classType + ".initInstance(FlatJS.allocOrThrow(" + t_1.size + "," + t_1.align + "))";
         return [left + expr_1 + s.substring(p + m.length),
             left.length + expr_1.length];
@@ -1323,6 +1324,7 @@ function newMacro(s, p, ms) {
     if (!t)
         throw new Error("Unknown type argument to @new array: " + arrayType);
     // NOTE, parens removed here
+    // Issue #16: Watch it: Parens interact with semicolon insertion.
     var expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.elementAlign + ")";
     return [left + expr + s.substring(pp.where),
         left.length + expr.length];

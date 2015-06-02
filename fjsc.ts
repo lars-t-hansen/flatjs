@@ -462,6 +462,8 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	    if (end_re.test(l))
 		break;
 	    if (m = method_re.exec(l)) {
+		if (kind != "class")
+		    throw new Error("@method is only allowed in classes");
 		if (in_method)
 		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
 		in_method = true;
@@ -480,6 +482,8 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		mbody = [m[2]];
 	    }
 	    else if (m = special_re.exec(l)) {
+		if (kind != "struct")
+		    throw new Error(`@${m[1]} is only allowed in structs`);
 		if (in_method)
 		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
 		in_method = true;
