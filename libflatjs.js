@@ -317,12 +317,12 @@ function _FlatJS_init_ab(flatjs, ab, initialize) {
 function _FlatJS_alloc_sab(nbytes, alignment) {
     do {
 	var p = Atomics.load(_mem_int32, 1);
-	p = (p + (alignment-1)) & ~(alignment - 1);
-	var top = p + nbytes;
+	var q = (p + (alignment-1)) & ~(alignment - 1);
+	var top = q + nbytes;
 	if (top >= _mem_int32[2])
 	    return 0;
     } while (Atomics.compareExchange(_mem_int32, 1, p, top) != p);
-    return p;
+    return q;
 }
 
 function _FlatJS_alloc_ab(nbytes, alignment) {
@@ -349,6 +349,6 @@ var float32x4 = { SIZE:16, ALIGN:16, NAME:"float32x4" };
 var float64x2 = { SIZE:16, ALIGN:16, NAME:"float64x2" };
 
 function MemoryError(msg) {
-    this.msg = msg;
+    this.message = msg;
 }
 MemoryError.prototype = new Error("Memory Error");
