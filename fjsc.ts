@@ -270,7 +270,7 @@ class MapEntry {
 
     get memory(): string {
 	if (this.type.kind != DefnKind.Primitive)
-	    throw new Error("No memory type available for non-primitive type " + this.type.name);
+	    throw new InternalError("No memory type available for non-primitive type " + this.type.name);
 	return (<PrimitiveDefn> this.type).memory;
     }
 
@@ -331,7 +331,7 @@ class SMap<T> {
 	return { next:
 		 function (): T {
 		     if (theMap.generation != generation)
-			 throw new Error("Generator invalidated by assignment");
+			 throw new InternalError("Generator invalidated by assignment");
 		     if (i == props.length)
 			 return null;
 		     return props[i++].value;
@@ -346,7 +346,7 @@ class SMap<T> {
 	return { next:
 		 function (): [string,T] {
 		     if (theMap.generation != generation)
-			 throw new Error("Generator invalidated by assignment");
+			 throw new InternalError("Generator invalidated by assignment");
 		     if (i == props.length)
 			 return [null,null];
 		     let x = props[i++];
@@ -373,31 +373,61 @@ class Source {
     constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public lines:string[]) {}
 }
 
+class CapturedError {
+    constructor(public msg:string) {}
+}
+
+class InternalError extends CapturedError {
+    constructor(msg:string) {
+	super("Internal error: " + msg);
+    }
+}
+
+class UsageError extends CapturedError {
+    constructor(msg:string) {
+	super("Usage error: " + msg);
+    }
+}
+
+class ProgramError extends CapturedError {
+    constructor(file:string, line:number, msg:string) {
+	super(file + ":" + line + ": " + msg);
+    }
+}
+
 const allSources:Source[] = [];
 
 function main(args: string[]):void {
-    for ( let input_file of args ) {
-	if (input_file.length < 10 ||
-	    (input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
-	    throw new Error("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
-	let text = fs.readFileSync(input_file, "utf8");
-	let lines = text.split("\n");
-	let [defs, residual] = collectDefinitions(input_file, lines);
-	let output_file = input_file.replace(/\.flatjs$/,"");
-	allSources.push(new Source(input_file, output_file, defs, residual));
+    try {
+	for ( let input_file of args ) {
+	    if (input_file.length < 10 ||
+		(input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
+		throw new UsageError("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
+	    let text = fs.readFileSync(input_file, "utf8");
+	    let lines = text.split("\n");
+	    let [defs, residual] = collectDefinitions(input_file, lines);
+	    let output_file = input_file.replace(/\.flatjs$/,"");
+	    allSources.push(new Source(input_file, output_file, defs, residual));
+	}
+
+	buildTypeMap();
+	resolveTypeRefs();
+	checkRecursion();
+	layoutTypes();
+	createVirtuals();
+	expandSelfAccessors();
+	pasteupTypes();
+	expandGlobalAccessorsAndMacros();
+
+	for ( let s of allSources )
+	    fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
     }
-
-    buildTypeMap();
-    resolveTypeRefs();
-    checkRecursion();
-    layoutTypes();
-    createVirtuals();
-    expandSelfAccessors();
-    pasteupTypes();
-    expandGlobalAccessorsAndMacros();
-
-    for ( let s of allSources )
-	fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
+    catch (e) {
+	if (e instanceof CapturedError)
+	    console.log(e.msg);
+	else
+	    throw e;
+    }
 }
 
 const Ws = "\\s+";
@@ -444,7 +474,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	    inherit = m[2] ? m[2] : "";
 	}
 	else
-	    throw new Error(filename + ":" + i + ": Syntax error: Malformed definition line");
+	    throw new ProgramError(filename, i, "Syntax error: Malformed definition line");
 
 	let properties:Prop[] = [];
 	let methods:Method[] = [];
@@ -463,7 +493,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		break;
 	    if (m = method_re.exec(l)) {
 		if (kind != "class")
-		    throw new Error("@method is only allowed in classes");
+		    throw new ProgramError(filename, i, "@method is only allowed in classes");
 		if (in_method)
 		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
 		in_method = true;
@@ -471,19 +501,19 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		method_name = m[1];
 		// Parse the signature.  Just use the param parser for now,
 		// but note that what we get back will need postprocessing.
-		let pp = new ParamParser(m[2], /* skip left paren */ 1);
+		let pp = new ParamParser(filename, i, m[2], /* skip left paren */ 1);
 		let args = pp.allArgs();
 		args.shift();	               // Discard SELF
 		// TODO: In principle there are two signatures here: there is the
 		// parameter signature, which we could/should keep intact in the
 		// virtual, and there is the set of arguments extracted from that,
 		// including any splat.
-		method_signature = args.map(parameterToArgument);
+		method_signature = args.map(function (x) { return parameterToArgument(filename, i, x) });
 		mbody = [m[2]];
 	    }
 	    else if (m = special_re.exec(l)) {
 		if (kind != "struct")
-		    throw new Error(`@${m[1]} is only allowed in structs`);
+		    throw new ProgramError(filename, i, `@${m[1]} is only allowed in structs`);
 		if (in_method)
 		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
 		in_method = true;
@@ -517,7 +547,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	    else if (blank_re.test(l)) {
 	    }
 	    else
-		throw new Error(filename + ":" + i + ": Syntax error: Not a property or method: " + l);
+		throw new ProgramError(filename, i, "Syntax error: Not a property or method: " + l);
 	}
 	if (in_method)
 	    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
@@ -531,12 +561,12 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 }
 
 // The input is Id, Id:Blah, or ...Id.  Strip any :Blah annotations.
-function parameterToArgument(s:string):string {
+function parameterToArgument(file, line, s:string):string {
     if (/^\s*(?:\.\.\.)[A-Za-z_$][A-Za-z0-9_$]*\s*$/.test(s))
 	return s;
     let m = /^\s*([A-Za-z_\$][A-Za-z0-9_\$]*)\s*:?/.exec(s);
-    if (!m)			// TODO: line numbers
-	throw new Error("Unable to understand argument to virtual function: <" + s + ">");
+    if (!m)
+	throw new ProgramError(file, line, "Unable to understand argument to virtual function: " + s);
     return m[1];
 }
 
@@ -572,7 +602,7 @@ function buildTypeMap():void {
     for ( let s of allSources ) {
 	for ( let d of s.defs ) {
 	    if (knownTypes.test(d.name))
-		throw new Error(d.file + ":" + d.line + ": Duplicate type name: " + d.name);
+		throw new ProgramError(d.file, d.line, "Duplicate type name: " + d.name);
 	    knownTypes.put(d.name, d);
 	    userTypes.push(d);
 	}
@@ -591,16 +621,16 @@ function resolveTypeRefs():void {
 	    if (cls.baseName != "") {
 		let probe = knownTypes.get(cls.baseName);
 		if (!probe)
-		    throw new Error(cls.file + ":" + cls.line + ": Missing base type: " + cls.baseName);
+		    throw new ProgramError(cls.file, cls.line, "Missing base type: " + cls.baseName);
 		if (probe.kind != DefnKind.Class)
-		    throw new Error(cls.file + ":" + cls.line + ": Base type is not class: " + cls.baseName);
+		    throw new ProgramError(cls.file, cls.line, "Base type is not class: " + cls.baseName);
 		cls.baseTypeRef = <ClassDefn> probe;
 		cls.baseTypeRef.subclasses.push(cls);
 	    }
 	}
 	for ( let p of d.props ) {
 	    if (!knownTypes.test(p.typeName))
-		throw new Error(d.file + ":" + p.line + ": Undefined type: " + p.typeName);
+		throw new ProgramError(d.file, p.line, "Undefined type: " + p.typeName);
 	    let ty:Defn = null;
 	    if (p.qual != PropQual.None) {
 		if (p.qual == PropQual.Atomic)
@@ -608,7 +638,7 @@ function resolveTypeRefs():void {
 		else
 		    ty = knownTypes.get("synchronic/" + p.typeName);
 		if (!ty)
-		    throw new Error(d.file + ":" + p.line + ": Not " + (p.qual == PropQual.Atomic ? "an atomic" : "a synchronic") + " type: " + p.typeName);
+		    throw new ProgramError(d.file, p.line, ": Not " + (p.qual == PropQual.Atomic ? "an atomic" : "a synchronic") + " type: " + p.typeName);
 	    }
 	    else
 		ty = knownTypes.get(p.typeName);
@@ -638,7 +668,7 @@ function checkRecursion():void {
 		continue;
 	    let s = <StructDefn> probe;
 	    if (s.live)
-		throw new Error("Recursive type reference to struct " + p.typeName + " from " + d.name); // TODO: file/line
+		throw new ProgramError(d.file, p.line, "Recursive type reference to struct " + p.typeName + " from " + d.name);
 	    p.typeRef = s;
 	    checkRecursionForStruct(s);
 	}
@@ -653,7 +683,7 @@ function checkRecursion():void {
 	d.live = true;
 	if (d.baseTypeRef) {
 	    if (d.baseTypeRef.live)
-		throw new Error("Recursive type reference to base class from " + d.name); // TODO: file/line
+		throw new ProgramError(d.file, d.line, "Recursive type reference to base class from " + d.name);
 	    checkRecursionForClass(d.baseTypeRef);
 	}
 	d.live = false;
@@ -687,7 +717,7 @@ function layoutClass(d:ClassDefn):void {
     d.classId = computeClassId(d.className);
     let idAsString = String(d.classId);
     if (knownIds.test(idAsString))
-	throw new Error("Duplicate class ID for " + d.className + ": previous=" + knownIds.get(idAsString).className);
+	throw new ProgramError(d.file, d.line, "Duplicate class ID for " + d.className + ": previous=" + knownIds.get(idAsString).className);
     knownIds.put(idAsString, d);
 }
 
@@ -769,7 +799,7 @@ function computeClassId(name:string):number {
 	else if (c == '>')
 	    v = 63;
 	else
-	    throw new Error("Internal error: Bad character in class name: " + c);
+	    throw new InternalError("Bad character in class name: " + c);
 	n = (((n & 0x1FFFFFF) << 3) | (n >>> 25)) ^ v;
     }
     return n;
@@ -822,7 +852,7 @@ function findMethodImplFor(cls:ClassDefn, stopAt:ClassDefn, name:string):string 
 	return cls.name + "." + name + "_impl";
     if (cls.baseTypeRef)
 	return findMethodImplFor(cls.baseTypeRef, stopAt, name);
-    throw new Error("Internal error: Method not found: " + name);
+    throw new InternalError("Method not found: " + name);
 }
 
 
@@ -951,20 +981,26 @@ function expandGlobalAccessorsAndMacros():void {
 	let lines = source.lines;
 	let nlines: string[] = [];
 	for ( let j=0 ; j < lines.length ; j++ )
-	    nlines.push(expandMacrosIn(lines[j]))
+	    nlines.push(expandMacrosIn(source.input_file, j+1, lines[j]))
 	source.lines = nlines;
     }
 }
+
+// TODO: it's likely that the expandMacrosIn is really better
+// represented as a class, with a ton of methods and locals (eg for
+// file and line), performing expansion on one line.
 
 const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(add_|sub_|and_|or_|xor_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_|notify_|set_|ref_)?([a-zA-Z0-9_]+)\s*\(/g;
 const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
 const new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
 
-function expandMacrosIn(text:string):string {
-    return myExec(new_re, newMacro, myExec(arr_re, arrMacro, myExec(acc_re, accMacro, text)));
+function expandMacrosIn(file:string, line:number, text:string):string {
+    return myExec(file, line, new_re, newMacro,
+		  myExec(file, line, arr_re, arrMacro,
+			 myExec(file, line, acc_re, accMacro, text)));
 }
 
-function myExec(re:RegExp, macro:(string, number, RegExpExecArray)=>[string,number], text:string):string {
+function myExec(file:string, line:number, re:RegExp, macro:(fn:string, l:number, s:string, p:number, m:RegExpExecArray)=>[string,number], text:string):string {
     let old = re.lastIndex;
     re.lastIndex = 0;
 
@@ -976,7 +1012,7 @@ function myExec(re:RegExp, macro:(string, number, RegExpExecArray)=>[string,numb
 	// the macro may eat additional input.  So the macro should
 	// be returning a new string, as well as the index at which
 	// to continue the search.
-	let [newText, newStart] = macro(text, re.lastIndex-m[0].length, m);
+	let [newText, newStart] = macro(file, line, text, re.lastIndex-m[0].length, m);
 	text = newText;
 	re.lastIndex = newStart;
     }
@@ -989,7 +1025,7 @@ class ParamParser {
     private lim = 0;
     private done = false;
 
-    constructor(private input:string, private pos:number) {
+    constructor(private file:string, private line:number, private input:string, private pos:number) {
 	this.lim = input.length;
     }
 
@@ -1044,7 +1080,7 @@ class ParamParser {
 	    case '\'':
 	    case '"':
 		// Issue 5: implement this
-		throw new Error("Internal error: Avoid strings in arguments for now");
+		throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
 	    }
 	}
     }
@@ -1087,7 +1123,7 @@ const OpAttr = {
     "compareExchange_": { arity: 3, atomic: "compareExchange", synchronic: "_synchronicCompareExchange" },
 };
 
-function accMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
+function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m = ms[0];
     let className = ms[1];
     let operation = ms[2];
@@ -1114,7 +1150,7 @@ function accMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
 
     // Issue 6: Emit warnings for arity abuse, at a minimum.
 
-    let pp = new ParamParser(s, p+m.length);
+    let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
     if (OpAttr[operation].arity != as.length) {
 	console.log(`Bad set arity ${propName} / ${as.length}`);
@@ -1122,16 +1158,17 @@ function accMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
     };
 
     // Issue #16: Watch it: Parens interact with semicolon insertion.
-    let ref = `(${expandMacrosIn(endstrip(as[0]))} + ${fld.offset})`;
+    let ref = `(${expandMacrosIn(file, line, endstrip(as[0]))} + ${fld.offset})`;
     if (operation == "ref_") {
 	return [left + ref + s.substring(pp.where),
 		left.length + ref.length];
     }
 
-    return loadFromRef(ref, fld.type, s, left, operation, pp, as[1], as[2], nomatch);
+    return loadFromRef(file, line, ref, fld.type, s, left, operation, pp, as[1], as[2], nomatch);
 }
 
-function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:string, pp:ParamParser,
+function loadFromRef(file:string, line:number,
+		     ref:string, type:Defn, s:string, left:string, operation:string, pp:ParamParser,
 		     rhs:string, rhs2:string, nomatch:[string,number]):[string,number]
 {
     let mem="", size=0, synchronic=false, atomic=false, shift=-1;
@@ -1156,14 +1193,14 @@ function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:str
 	case 1:
 	    break;
 	case 2:
-	    rhs = expandMacrosIn(endstrip(rhs));
+	    rhs = expandMacrosIn(file, line, endstrip(rhs));
 	    break;
 	case 3:
-	    rhs = expandMacrosIn(endstrip(rhs));
-	    rhs2 = expandMacrosIn(endstrip(rhs2));
+	    rhs = expandMacrosIn(file, line, endstrip(rhs));
+	    rhs2 = expandMacrosIn(file, line, endstrip(rhs2));
 	    break;
 	default:
-	    throw new Error("Internal error: no operator: " + operation);
+	    throw new InternalError("No operator: " + operation);
 	}
 	let fieldIndex = synchronic ? `(${ref} + ${SynchronicDefn.bias}) >> ${shift}` : `${ref} >> ${shift}`;
 	switch (operation) {
@@ -1199,7 +1236,7 @@ function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:str
 		expr = `FlatJS.${OpAttr[operation].synchronic}(${ref}, ${mem}, ${fieldIndex}, ${rhs}, ${rhs2})`;
 	    break;
 	default:
-	    throw new Error("Internal: No operator: " + operation);
+	    throw new InternalError("No operator: " + operation);
 	}
 	// Issue #16: Parens interact with semicolon insertion.
 	//expr = `(${expr})`;
@@ -1218,7 +1255,7 @@ function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:str
 	    break;
 	case "set_":
 	    if (t.hasSetMethod)
-		expr = `${t.name}._set_impl(${ref}, ${expandMacrosIn(endstrip(rhs))})`;
+		expr = `${t.name}._set_impl(${ref}, ${expandMacrosIn(file, line, endstrip(rhs))})`;
 	    break;
 	}
 	if (expr == "")
@@ -1237,7 +1274,7 @@ function loadFromRef(ref:string, type:Defn, s:string, left:string, operation:str
 
 // FIXME: for fields within a structure, operation could be ref, too
 
-function arrMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
+function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];
     let typeName=ms[1];
     let operation=ms[2];
@@ -1248,7 +1285,7 @@ function arrMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
     if (!type)
 	return nomatch;
 
-    let pp = new ParamParser(s, p+m.length);
+    let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
 
     // Issue 6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
@@ -1269,7 +1306,7 @@ function arrMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
 	if (field)
 	    return nomatch;
     }
-    let ref = "(" + expandMacrosIn(endstrip(as[0])) + "+" + type.elementSize + "*" + expandMacrosIn(endstrip(as[1])) + ")";
+    let ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + "+" + type.elementSize + "*" + expandMacrosIn(file, line, endstrip(as[1])) + ")";
     if (field) {
 	let fld = (<StructDefn> type).findAccessibleFieldFor(operation, field);
 	if (!fld)
@@ -1279,12 +1316,12 @@ function arrMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
 	type = fld.type;
     }
 
-    return loadFromRef(ref, type, s, s.substring(0,p), operation, pp, as[2], as[3], nomatch);
+    return loadFromRef(file, line, ref, type, s, s.substring(0,p), operation, pp, as[2], as[3], nomatch);
 }
 
 // Since @new is new syntax, we throw errors for all misuse.
 
-function newMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
+function newMacro(file, line, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];
     let arrayType=ms[1];
     let classType=ms[2];
@@ -1292,7 +1329,7 @@ function newMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
     if (classType !== undefined) {
 	let t = knownTypes.get(classType);
 	if (!t)
-	    throw new Error("Unknown type argument to @new: " + classType);
+	    throw new ProgramError(file, line, "Unknown type argument to @new: " + classType);
 	// NOTE, parens removed here
 	// Issue #16: Watch it: Parens interact with semicolon insertion.
 	let expr = classType + ".initInstance(FlatJS.allocOrThrow(" + t.size + "," + t.align + "))";
@@ -1300,24 +1337,24 @@ function newMacro(s:string, p:number, ms:RegExpExecArray):[string,number] {
 		left.length + expr.length ];
     }
 
-    let pp = new ParamParser(s, p+m.length);
+    let pp = new ParamParser(file, line, s, p+m.length);
     let as = pp.allArgs();
     if (as.length != 1)
-	throw new Error("Wrong number of arguments to @new array(" + arrayType + ")")
+	throw new ProgramError(file, line, "Wrong number of arguments to @new array(" + arrayType + ")");
 
     let t = findType(arrayType);
     if (!t)
-	throw new Error("Unknown type argument to @new array: " + arrayType);
+	throw new ProgramError(file, line, "Unknown type argument to @new array: " + arrayType);
     // NOTE, parens removed here
     // Issue #16: Watch it: Parens interact with semicolon insertion.
-    let expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(endstrip(as[0])) + ", " + t.elementAlign + ")";
+    let expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(file, line, endstrip(as[0])) + ", " + t.elementAlign + ")";
     return [left + expr + s.substring(pp.where),
 	    left.length + expr.length];
 }
 
 function findType(name:string):Defn {
     if (!knownTypes.test(name))
-	throw new Error("Internal: Unknown type in sizeofType: " + name);
+	throw new InternalError("Unknown type in sizeofType: " + name);
     return knownTypes.get(name);
 }
 
@@ -1333,7 +1370,7 @@ function endstrip(x:string):string {
 
 function log2(x:number):number {
     if (x <= 0)
-	throw new Error("log2: " + x);
+	throw new InternalError("log2: " + x);
     let i = 0;
     while (x > 1) {
 	i++;
