@@ -1,7 +1,6 @@
 ## Immediate things to do:
 
 * More test cases
-* Test on ray tracer
 * v1 targeted issues
 * This list could go into the wiki section of the repo.
 
@@ -28,13 +27,15 @@
   A destructor would call member destructors and base destructors.
   Presumably there would be some @delete operator?  [Though see
   below, re syntax]
-* Follow TypedObject more closely: Consider int32.atomic as naming the
-  atomic int32 type.  T.Array would be an array of T (capitalized
-  because TypedObject does so).  T.Array(10).Array is a nice
-  representation of array-of-array.  So we'd have T.Array.set(p,k,v).
-  We'd have @new int32.Array(10), @new int32.atomic.Array(10).  The
-  accessor syntax is clunky but for common cases no worse than what
-  we have now, and clearly more general.
+* [Issue 18] Follow TypedObject more closely: Consider int32.atomic as
+  naming the atomic int32 type.  T.Array would be an array of T
+  (capitalized because TypedObject does so).  T.Array(10).Array is a
+  nice representation of array-of-array.  So we'd have
+  T.Array.set(p,k,v).  We'd have @new int32.Array(10), @new
+  int32.atomic.Array(10).  The accessor syntax is clunky but for
+  common cases no worse than what we have now, and clearly more
+  general.
+  http://wiki.ecmascript.org/doku.php?id=harmony:typed_objects
 
 ### Likely medium value
 
@@ -42,9 +43,9 @@
   ES7/TS1.6 decorator syntax.  It may be the other uses of @ are also,
   or even more, problematic, if only because we'd want to be kind to
   decorators that are embedded within flatjs code.  Useful to fix this.
-* SIMD primitive types (non-atomic): float32x4, int32x4, others?  (Not
-  yet high value because status and utility of SIMD in JavaScript,
-  sans value types, is unclear.  Must investigate.)
+* More SIMD types, as they become available.  See:
+  http://littledan.github.io/simd.html,
+  https://github.com/johnmccutchan/ecmascript_simd
 * Structs should be allowed to inherit from other structs
 * In-line fixed-length array types, these are effectively unnamed struct
   types, eg, xs: array(int32,10)
@@ -57,8 +58,13 @@
   ambiguities to force the use of other names when it becomes
   a problem.
 
-### Unclear value
+### Unclear value / to be resolved
 
+* In some of the SIMD work there's mention of Float32x4Array and
+  operations on that, although there's nothing in the SIMD spec and
+  nothing in Firefox.  Right now, float32x4.array is just a float32
+  array, which will be a compatibility issue(?) if the new view
+  type is ever added.
 * Consider generalizing syntax etc in the following way.  Instead of
   writing T.x_y_z(p) for a subreference, write T.x.y.z(p).  Expand it in
   the same way (and now _ is allowed, maybe, though it's needed for
@@ -92,8 +98,9 @@
   TypeName.propname with anything else, it's a short slide down the
   slippery slope to add enums and compile-time constants (which would
   be necessary for in-line arrays with symbolically defined lengths,
-  "@flatjs const x = 10").  Sliding further, constant expressions.
-  Sliding further still, type aliases: @flatjs type X = int32.atomic.Array,
+  "@flatjs const x = 10").
+* Sliding further, constant expressions.
+* Sliding further still, type aliases: @flatjs type X = int32.atomic.Array,
   then X.set() and X.get().
 * String types, maybe?  Easy enough to define a SharedString class
   that references an underlying array, probably.  Doing so would get

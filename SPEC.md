@@ -42,7 +42,8 @@ and demo/.
 ## Primitive types
 
 There are global objects with the following names:
-  int8, uint8, int16, uint16, int32, uint32, float32, float64
+  int8, uint8, int16, uint16, int32, uint32, float32, float64,
+  int32x4, float32x4, float64x2
 
 Each of these objects have two properties:
   SIZE => the size in bytes of the type
@@ -68,10 +69,10 @@ identity) with named, mutable fields.
   Comment ::= "//" Not-EOL*
 
   Type ::= AtomicType | ValType | ArrayType
-  AtomicType ::= ("atomic" | "synchronic")? ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32")
-  ValType ::= ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32")
-            | "float32"
-            | "float64"
+  AtomicType ::= ("atomic" | "synchronic") ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32")
+  ValType ::= "int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32"
+            | "float32" | "float64"
+	    | "int32x4" | "float32x4" | "float64x2"
             | Id
   ArrayType ::= array(ValType)
 
@@ -306,8 +307,8 @@ libflatjs.js, which must be loaded once before application files that
 are translated from FlatJS.
 
 For each primitive type (int8, uint8, int16, uint16, int32, uint32,
-float32, float64) there is a global variable with the type name
-containing the following properties:
+float32, float64, int32x4, float32x4, float64x2) there is a global
+variable with the type name containing the following properties:
 
 * SIZE is the size in bytes of the type
 * ALIGN is the required alignment in bytes of the type

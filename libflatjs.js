@@ -344,6 +344,9 @@ var int32 = { SIZE:4, ALIGN:4, NAME:"int32" };
 var uint32 = { SIZE:4, ALIGN:4, NAME:"uint32" };
 var float32 = { SIZE:4, ALIGN:4, NAME:"float32" };
 var float64 = { SIZE:8, ALIGN:8, NAME:"float64" };
+var int32x4 = { SIZE:16, ALIGN:16, NAME:"int32x4" };
+var float32x4 = { SIZE:16, ALIGN:16, NAME:"float32x4" };
+var float64x2 = { SIZE:16, ALIGN:16, NAME:"float64x2" };
 
 function MemoryError(msg) {
     this.msg = msg;

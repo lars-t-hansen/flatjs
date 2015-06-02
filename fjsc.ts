@@ -49,14 +49,24 @@ class Defn {
     static pointerMemName = "_mem_int32";
 }
 
+enum PrimKind {
+    Vanilla,
+    Atomic,
+    Synchronic,
+    SIMD
+}
+
 class PrimitiveDefn extends Defn {
     private _memory: string;
 
-    constructor(name:string, size:number, align:number, public atomic:boolean=false, public synchronic:boolean=false) {
+    constructor(name:string, size:number, align:number, public primKind:PrimKind=PrimKind.Vanilla) {
 	super(name, DefnKind.Primitive);
 	this.size = size;
 	this.align = align;
-	this._memory = "_mem_" + name.split("/").pop();
+	if (primKind == PrimKind.SIMD)
+	    this._memory = "_mem_" + name.split("x")[0];
+	else
+	    this._memory = "_mem_" + name.split("/").pop();
     }
 
     get memory(): string {
@@ -66,17 +76,23 @@ class PrimitiveDefn extends Defn {
 
 class AtomicDefn extends PrimitiveDefn {
     constructor(name:string, size:number, align:number) {
-	super(name, size, align, true, false);
+	super(name, size, align, PrimKind.Atomic);
     }
 }
 
 class SynchronicDefn extends PrimitiveDefn {
     constructor(name:string, size:number, align:number, public baseSize:number) {
-	super(name, size, align, false, true);
+	super(name, size, align, PrimKind.Synchronic);
     }
 
     // The byte offset within the structure for the payload
     static bias = 8;
+}
+
+class SIMDDefn extends PrimitiveDefn {
+    constructor(name:string, size:number, align:number, public baseSize:number) {
+	super(name, size, align, PrimKind.SIMD);
+    }
 }
 
 class UserDefn extends Defn {
@@ -107,7 +123,7 @@ class UserDefn extends Defn {
 	    if (d.type.kind != DefnKind.Primitive)
 		return null;
 	    let prim = <PrimitiveDefn> d.type;
-	    if (!(prim.atomic || prim.synchronic))
+	    if (prim.primKind != PrimKind.Atomic && prim.primKind != PrimKind.Synchronic)
 		return null;
 	    return d;
 	}
@@ -118,7 +134,7 @@ class UserDefn extends Defn {
 	    if (d.type.kind != DefnKind.Primitive)
 		return null;
 	    let prim = <PrimitiveDefn> d.type;
-	    if (!prim.synchronic)
+	    if (prim.primKind != PrimKind.Synchronic)
 		return null;
 	    return d;
 	}
@@ -598,6 +614,10 @@ function buildTypeMap():void {
 
     knownTypes.put("float32", new PrimitiveDefn("float32", 4, 4));
     knownTypes.put("float64", new PrimitiveDefn("float64", 8, 8));
+
+    knownTypes.put("int32x4", new SIMDDefn("int32x4", 16, 16, 4));
+    knownTypes.put("float32x4", new SIMDDefn("float32x4", 16, 16, 4));
+    knownTypes.put("float64x2", new SIMDDefn("float64x2", 16, 16, 8));
 
     for ( let s of allSources ) {
 	for ( let d of s.defs ) {
@@ -1169,16 +1189,21 @@ function loadFromRef(file:string, line:number,
 		     ref:string, type:Defn, s:string, left:string, operation:string, pp:ParamParser,
 		     rhs:string, rhs2:string, nomatch:[string,number]):[string,number]
 {
-    let mem="", size=0, synchronic=false, atomic=false, shift=-1;
+    let mem="", size=0, synchronic=false, atomic=false, simd=false, shift=-1, simdType="";
     if (type.kind == DefnKind.Primitive) {
 	let prim = <PrimitiveDefn> type;
 	mem = prim.memory;
-	synchronic = prim.synchronic;
-	atomic = prim.atomic;
+	synchronic = prim.primKind == PrimKind.Synchronic;
+	atomic = prim.primKind == PrimKind.Atomic;
+	simd = prim.primKind == PrimKind.SIMD;
 	if (synchronic)
 	    shift = log2((<SynchronicDefn> prim).baseSize);
+	else if (simd)
+	    shift = log2((<SIMDDefn> prim).baseSize);
 	else
 	    shift = log2(prim.size);
+	if (simd)
+	    simdType = prim.name;
     }
     else if (type.kind == DefnKind.Class) {
 	mem = Defn.pointerMemName;
@@ -1200,11 +1225,17 @@ function loadFromRef(file:string, line:number,
 	default:
 	    throw new InternalError("No operator: " + operation);
 	}
-	let fieldIndex = synchronic ? `(${ref} + ${SynchronicDefn.bias}) >> ${shift}` : `${ref} >> ${shift}`;
+	let fieldIndex = "";
+	if (synchronic)
+	    fieldIndex = `(${ref} + ${SynchronicDefn.bias}) >> ${shift}`;
+	else
+	    fieldIndex = `${ref} >> ${shift}`;
 	switch (operation) {
 	case "get_":
 	    if (atomic || synchronic)
 		expr = `Atomics.load(${mem}, ${fieldIndex})`;
+	    else if (simd)
+		expr = `SIMD.${simdType}.load(${mem}, ${fieldIndex})`;
 	    else
 		expr = `${mem}[${fieldIndex}]`;
 	    break;
@@ -1223,6 +1254,8 @@ function loadFromRef(file:string, line:number,
 		expr = `Atomics.${OpAttr[operation].atomic}(${mem}, ${fieldIndex}, ${rhs})`;
 	    else if (synchronic)
 		expr = `FlatJS.${OpAttr[operation].synchronic}(${ref}, ${mem}, ${fieldIndex}, ${rhs})`;
+	    else if (simd)
+		expr = `SIMD.${simdType}.store(${mem}, ${fieldIndex}, ${rhs})`;
 	    else
 		expr = `${mem}[${ref} >> ${shift}] = ${rhs}`;
 	    break;
@@ -1296,6 +1329,7 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     case "set": if (as.length != 3) return nomatch; operation = "set_"; break;
     }
 
+    let multiplier = type.elementSize;
     if (type.kind == DefnKind.Primitive) {
 	if (field)
 	    return nomatch;
@@ -1304,7 +1338,7 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
 	if (field)
 	    return nomatch;
     }
-    let ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + "+" + type.elementSize + "*" + expandMacrosIn(file, line, endstrip(as[1])) + ")";
+    let ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + "+" + multiplier + "*" + expandMacrosIn(file, line, endstrip(as[1])) + ")";
     if (field) {
 	let fld = (<StructDefn> type).findAccessibleFieldFor(operation, field);
 	if (!fld)

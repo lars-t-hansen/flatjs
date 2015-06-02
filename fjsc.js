@@ -59,17 +59,25 @@ var Defn = (function () {
     Defn.pointerMemName = "_mem_int32";
     return Defn;
 })();
+var PrimKind;
+(function (PrimKind) {
+    PrimKind[PrimKind["Vanilla"] = 0] = "Vanilla";
+    PrimKind[PrimKind["Atomic"] = 1] = "Atomic";
+    PrimKind[PrimKind["Synchronic"] = 2] = "Synchronic";
+    PrimKind[PrimKind["SIMD"] = 3] = "SIMD";
+})(PrimKind || (PrimKind = {}));
 var PrimitiveDefn = (function (_super) {
     __extends(PrimitiveDefn, _super);
-    function PrimitiveDefn(name, size, align, atomic, synchronic) {
-        if (atomic === void 0) { atomic = false; }
-        if (synchronic === void 0) { synchronic = false; }
+    function PrimitiveDefn(name, size, align, primKind) {
+        if (primKind === void 0) { primKind = PrimKind.Vanilla; }
         _super.call(this, name, DefnKind.Primitive);
-        this.atomic = atomic;
-        this.synchronic = synchronic;
+        this.primKind = primKind;
         this.size = size;
         this.align = align;
-        this._memory = "_mem_" + name.split("/").pop();
+        if (primKind == PrimKind.SIMD)
+            this._memory = "_mem_" + name.split("x")[0];
+        else
+            this._memory = "_mem_" + name.split("/").pop();
     }
     Object.defineProperty(PrimitiveDefn.prototype, "memory", {
         get: function () {
@@ -83,19 +91,27 @@ var PrimitiveDefn = (function (_super) {
 var AtomicDefn = (function (_super) {
     __extends(AtomicDefn, _super);
     function AtomicDefn(name, size, align) {
-        _super.call(this, name, size, align, true, false);
+        _super.call(this, name, size, align, PrimKind.Atomic);
     }
     return AtomicDefn;
 })(PrimitiveDefn);
 var SynchronicDefn = (function (_super) {
     __extends(SynchronicDefn, _super);
     function SynchronicDefn(name, size, align, baseSize) {
-        _super.call(this, name, size, align, false, true);
+        _super.call(this, name, size, align, PrimKind.Synchronic);
         this.baseSize = baseSize;
     }
     // The byte offset within the structure for the payload
     SynchronicDefn.bias = 8;
     return SynchronicDefn;
+})(PrimitiveDefn);
+var SIMDDefn = (function (_super) {
+    __extends(SIMDDefn, _super);
+    function SIMDDefn(name, size, align, baseSize) {
+        _super.call(this, name, size, align, PrimKind.SIMD);
+        this.baseSize = baseSize;
+    }
+    return SIMDDefn;
 })(PrimitiveDefn);
 var UserDefn = (function (_super) {
     __extends(UserDefn, _super);
@@ -129,7 +145,7 @@ var UserDefn = (function (_super) {
                 if (d.type.kind != DefnKind.Primitive)
                     return null;
                 var prim = d.type;
-                if (!(prim.atomic || prim.synchronic))
+                if (prim.primKind != PrimKind.Atomic && prim.primKind != PrimKind.Synchronic)
                     return null;
                 return d;
             }
@@ -140,7 +156,7 @@ var UserDefn = (function (_super) {
                 if (d.type.kind != DefnKind.Primitive)
                     return null;
                 var prim = d.type;
-                if (!prim.synchronic)
+                if (prim.primKind != PrimKind.Synchronic)
                     return null;
                 return d;
             }
@@ -649,6 +665,9 @@ function buildTypeMap() {
     knownTypes.put("synchronic/uint32", new SynchronicDefn("synchronic/uint32", 12, 4, 4));
     knownTypes.put("float32", new PrimitiveDefn("float32", 4, 4));
     knownTypes.put("float64", new PrimitiveDefn("float64", 8, 8));
+    knownTypes.put("int32x4", new SIMDDefn("int32x4", 16, 16, 4));
+    knownTypes.put("float32x4", new SIMDDefn("float32x4", 16, 16, 4));
+    knownTypes.put("float64x2", new SIMDDefn("float64x2", 16, 16, 8));
     for (var _i = 0; _i < allSources.length; _i++) {
         var s = allSources[_i];
         for (var _a = 0, _b = s.defs; _a < _b.length; _a++) {
@@ -1194,16 +1213,21 @@ function accMacro(file, line, s, p, ms) {
     return loadFromRef(file, line, ref, fld.type, s, left, operation, pp, as[1], as[2], nomatch);
 }
 function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, nomatch) {
-    var mem = "", size = 0, synchronic = false, atomic = false, shift = -1;
+    var mem = "", size = 0, synchronic = false, atomic = false, simd = false, shift = -1, simdType = "";
     if (type.kind == DefnKind.Primitive) {
         var prim = type;
         mem = prim.memory;
-        synchronic = prim.synchronic;
-        atomic = prim.atomic;
+        synchronic = prim.primKind == PrimKind.Synchronic;
+        atomic = prim.primKind == PrimKind.Atomic;
+        simd = prim.primKind == PrimKind.SIMD;
         if (synchronic)
+            shift = log2(prim.baseSize);
+        else if (simd)
             shift = log2(prim.baseSize);
         else
             shift = log2(prim.size);
+        if (simd)
+            simdType = prim.name;
     }
     else if (type.kind == DefnKind.Class) {
         mem = Defn.pointerMemName;
@@ -1225,11 +1249,17 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
             default:
                 throw new InternalError("No operator: " + operation);
         }
-        var fieldIndex = synchronic ? "(" + ref + " + " + SynchronicDefn.bias + ") >> " + shift : ref + " >> " + shift;
+        var fieldIndex = "";
+        if (synchronic)
+            fieldIndex = "(" + ref + " + " + SynchronicDefn.bias + ") >> " + shift;
+        else
+            fieldIndex = ref + " >> " + shift;
         switch (operation) {
             case "get_":
                 if (atomic || synchronic)
                     expr = "Atomics.load(" + mem + ", " + fieldIndex + ")";
+                else if (simd)
+                    expr = "SIMD." + simdType + ".load(" + mem + ", " + fieldIndex + ")";
                 else
                     expr = mem + "[" + fieldIndex + "]";
                 break;
@@ -1248,6 +1278,8 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
                     expr = "Atomics." + OpAttr[operation].atomic + "(" + mem + ", " + fieldIndex + ", " + rhs + ")";
                 else if (synchronic)
                     expr = "FlatJS." + OpAttr[operation].synchronic + "(" + ref + ", " + mem + ", " + fieldIndex + ", " + rhs + ")";
+                else if (simd)
+                    expr = "SIMD." + simdType + ".store(" + mem + ", " + fieldIndex + ", " + rhs + ")";
                 else
                     expr = mem + "[" + ref + " >> " + shift + "] = " + rhs;
                 break;
@@ -1320,6 +1352,7 @@ function arrMacro(file, line, s, p, ms) {
             operation = "set_";
             break;
     }
+    var multiplier = type.elementSize;
     if (type.kind == DefnKind.Primitive) {
         if (field)
             return nomatch;
@@ -1328,7 +1361,7 @@ function arrMacro(file, line, s, p, ms) {
         if (field)
             return nomatch;
     }
-    var ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + "+" + type.elementSize + "*" + expandMacrosIn(file, line, endstrip(as[1])) + ")";
+    var ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + "+" + multiplier + "*" + expandMacrosIn(file, line, endstrip(as[1])) + ")";
     if (field) {
         var fld = type.findAccessibleFieldFor(operation, field);
         if (!fld)
