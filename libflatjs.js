@@ -140,6 +140,7 @@ var FlatJS =
     _synchronicStore: function (self, mem, idx, value) {
 	Atomics.store(mem, idx, value);
 	this._notify(self);
+	return value;
     },
 
     _synchronicCompareExchange: function (self, mem, idx, oldval, newval) {

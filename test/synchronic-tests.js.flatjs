@@ -14,6 +14,13 @@ FlatJS.init(ab, true);
 	SELF.set_count(x);	// synchronic store
 	return SELF;
     }
+
+    // Should turn into synchronic ops.
+
+    @method fnord(SELF) {
+	SELF.count = 0;
+	SELF.count += 5;
+    }
 } @end
 
 var c = Counter.init(@new Counter, 7);

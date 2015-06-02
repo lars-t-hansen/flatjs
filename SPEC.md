@@ -27,18 +27,25 @@ appear here and there to make recognition easier.  Please don't get
 hung up on this, it's mostly a matter of programming to fix it but that
 is not my focus right now.
 
-The translator is currently implemented by means of a fairly crude
-regular expression matcher.  Occasionally this leads to problems.  Some
-things to watch out for:
+The translator is implemented by means of a set of regular expression
+matchers and an unforgiving, context-insensitive, nonhygienic macro
+expander.  Occasionally this leads to problems.  Some things to watch
+out for:
 
 * Do not use expressions containing strings, comments, or regular expressions
   in the arguments to accessor macros (including array accessors).
-* Do not split calls to accessors across multiple source lines.
+* Do not split calls to accessors across multiple source lines, because
+  frequently the translator must scan for the end of the call
+* If using the assignment shorthand, keep the right-hand-side entirely
+  on the same line as the assignment operator.
 * Occasionally, the translator fails to parenthesize code correctly because
   it can't insert parentheses blindly as that interacts badly with
-  automatic semicolon insertion (yay JavaScript).  This will sometimes lead
-  to mysterious errors.  A look at the generated code is usually enough
-  to figure out what's going on.
+  automatic semicolon insertion (yay JavaScript).
+
+
+Failures to obey these rules will sometimes lead to mysterious parsing
+and runtime errors.  A look at the generated code is usually enough to
+figure out what's going on; problems tend to be local.
 
 ## Programs
 
@@ -354,17 +361,32 @@ and T.ALIGN otherwise.
 
 ## SELF accessor macros
 
-Inside the method for a struct or class T with a suite of accessor
-methods F1..Fn, there will be defined non-hygienic macros
-SELF.F1..SELF.Fk.  A reference to SELF.Fj(arg,...) is rewritten
+Inside the method for a struct or class T, the identifier SELF acts as
+a keyword identifying the object pointer that is the target of the
+method.
+
+Within the method, a number of macros are tied to the syntax "SELF.",
+as follows.
+
+If the type T has a suite of accessor methods F1..Fn, there will be
+macros SELF.F1..SELF.Fk.  A reference to SELF.Fj(arg,...) is rewritten
 at translation time as a reference to T.Fj(SELF, arg, ...).
 
 In the special case of a field getter Fg, which takes only the SELF
-argument, the form of the macro invocation shall be SELF.Mg, that
-is, without the empty parameter list.
+argument, the form of the macro invocation shall be SELF.Fj, that is,
+without the empty parameter list.  This is rewritten as T.Fj(SELF).
 
-Note that at present, methods on self cannot be invoked using
-this syntax.
+If a macro invocation has the form SELF.Fj op expr, where op is one of
+the assignment operators =, +=, -=, &=, |=, and ^=, then the macro
+invocation is rewritten as T.operation_Fj(SELF, expr), where operation
+is "set", "add", "sub", "and", "or", and "xor", respectively.
+
+The plain assignment operator can be chained, eg, SELF.x=SELF.y=0, but
+not for SIMD field types (at present).
+
+Furthermore, if there exists a method Mg and the syntax that is being
+used is SELF.Mg(arg, ...) then this is rewritten as T.Mg(SELF,arg,...).
+
 
 
 ## Global macros

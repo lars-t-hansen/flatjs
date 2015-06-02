@@ -61,9 +61,9 @@ function dot(a, b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
     }
 
     @set(SELF, v) {
-	SELF.set_x(v.x);
-	SELF.set_y(v.y);
-	SELF.set_z(v.z);
+	SELF.x = v.x;
+	SELF.y = v.y;
+	SELF.z = v.z;
     }
 } @end
 
@@ -81,11 +81,11 @@ function mulrefi(a, c) { return DL3(Vec3.x(a)*c, Vec3.y(a)*c, Vec3.z(a)*c); }
     mirror:    float64
 
     @set(SELF, m) {
-	SELF.set_diffuse(m.diffuse);
-	SELF.set_specular(m.specular);
-	SELF.set_shininess(m.shininess);
-	SELF.set_ambient(m.ambient);
-	SELF.set_mirror(m.mirror);
+	SELF.diffuse = m.diffuse;
+	SELF.specular = m.specular;
+	SELF.shininess = m.shininess;
+	SELF.ambient = m.ambient;
+	SELF.mirror = m.mirror;
     }
 } @end
 
@@ -101,7 +101,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     material: Material
 
     @method init(SELF, material) {
-	SELF.set_material(material)
+	SELF.material = material;
 	return SELF;
     }
 
@@ -120,11 +120,11 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     @method init(SELF, objects) {
 	var len = objects.length;
-	SELF.set_length(len)
+	SELF.length = len;
 	var objs = @new array(Surface, len);
 	for ( var i=0 ; i < len ; i++ )
 	    Surface.array_set(objs, i, objects[i]);
-	SELF.set_objects(objs);
+	SELF.objects = objs;
 	return SELF;
     }
 
@@ -156,8 +156,8 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     @method init(SELF, material, center, radius) {
 	Surface.init(SELF, material)
-	SELF.set_center(center)
-	SELF.set_radius(radius)
+	SELF.center = center;
+	SELF.radius = radius
 	return SELF;
     }
 
@@ -193,9 +193,9 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     @method init(SELF, material, v1, v2, v3) {
 	Surface.init(SELF, material)
-	SELF.set_v1(v1);
-	SELF.set_v2(v2);
-	SELF.set_v3(v3);
+	SELF.v1 = v1;
+	SELF.v2 = v2;
+	SELF.v3 = v3;
 	return SELF;
     }
 
@@ -242,13 +242,13 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     width: int32
 
     @method init(SELF, height, width, color) {
-	SELF.set_height(height);
-	SELF.set_width(width);
+	SELF.height = height;
+	SELF.width = width;
 	var data = @new array(int32, height*width);
 	var c = (255<<24)|((255*color.z)<<16)|((255*color.y)<<8)|(255*color.x)
 	for ( var i=0, l=width*height ; i < l ; i++ )
 	    int32.array_set(data, i, c);
-	SELF.set_data(data);
+	SELF.data = data;
 	return SELF;
     }
 

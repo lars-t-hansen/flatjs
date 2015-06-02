@@ -25,6 +25,11 @@ var glob = 0;
     x:int32
     y:int32
 
+    @method init(SELF) {
+	SELF.x = SELF.y = 0;	// Shorthand syntax
+	SELF.y += 5;		// Shorthand syntax
+    }
+
     @method deep6(SELF) {
 	SELF.set_x(-SELF.x);
 	SELF.set_y(-SELF.y);
@@ -77,7 +82,7 @@ assertEq(glob, 86);
     }
 
     @method deep6(SELF) {	// Override
-	SELF.set_z(-SELF.z);
+	SELF.z = -SELF.z;	// Alternate syntax
     }
 } @end
 

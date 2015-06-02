@@ -145,8 +145,10 @@ var UserDefn = (function (_super) {
                 if (d.type.kind != DefnKind.Primitive)
                     return null;
                 var prim = d.type;
-                if (prim.primKind != PrimKind.Atomic && prim.primKind != PrimKind.Synchronic)
-                    return null;
+                // add, sub, and, or, and xor are defined on plain primitives too, for
+                // internal reasons, but that is not documented.
+                //if (prim.primKind != PrimKind.Atomic && prim.primKind != PrimKind.Synchronic)
+                //    return null;
                 return d;
             }
             case "loadWhenEqual":
@@ -442,7 +444,7 @@ var Source = (function () {
     return Source;
 })();
 function CapturedError(name) { this.name = name; }
-CapturedError.prototype = new Error;
+CapturedError.prototype = new Error("CapturedError");
 function InternalError(msg) { this.message = "Internal error: " + msg; console.log(this.message); }
 InternalError.prototype = new CapturedError("InternalError");
 function UsageError(msg) { this.message = "Usage error: " + msg; }
@@ -452,39 +454,37 @@ function ProgramError(file, line, msg) { this.message = file + ":" + line + ": "
 ProgramError.prototype = new CapturedError("ProgramError");
 var allSources = [];
 function main(args) {
-    //try {
-    for (var _i = 0; _i < args.length; _i++) {
-        var input_file = args[_i];
-        if (input_file.length < 10 ||
-            (input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
-            throw new UsageError("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
-        var text = fs.readFileSync(input_file, "utf8");
-        var lines = text.split("\n");
-        var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
-        var output_file = input_file.replace(/\.flatjs$/, "");
-        allSources.push(new Source(input_file, output_file, defs, residual));
-    }
-    buildTypeMap();
-    resolveTypeRefs();
-    checkRecursion();
-    layoutTypes();
-    createVirtuals();
-    expandSelfAccessors();
-    pasteupTypes();
-    expandGlobalAccessorsAndMacros();
-    for (var _b = 0; _b < allSources.length; _b++) {
-        var s = allSources[_b];
-        fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
-    }
-    /*
+    try {
+        for (var _i = 0; _i < args.length; _i++) {
+            var input_file = args[_i];
+            if (input_file.length < 10 ||
+                (input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
+                throw new UsageError("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
+            var text = fs.readFileSync(input_file, "utf8");
+            var lines = text.split("\n");
+            var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
+            var output_file = input_file.replace(/\.flatjs$/, "");
+            allSources.push(new Source(input_file, output_file, defs, residual));
+        }
+        buildTypeMap();
+        resolveTypeRefs();
+        checkRecursion();
+        layoutTypes();
+        createVirtuals();
+        expandSelfAccessors();
+        pasteupTypes();
+        expandGlobalAccessorsAndMacros();
+        for (var _b = 0; _b < allSources.length; _b++) {
+            var s = allSources[_b];
+            fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
+        }
     }
     catch (e) {
-    if (e instanceof CapturedError)
-        console.log(e.msg);
-    else
-        throw e;
+        if (e instanceof CapturedError)
+            console.log(e.message);
+        else
+            throw e;
     }
-    */
 }
 var Ws = "\\s+";
 var Os = "\\s*";
@@ -626,45 +626,56 @@ function parameterToArgument(file, line, s) {
     return m[1];
 }
 var ParamParser = (function () {
-    function ParamParser(file, line, input, pos) {
+    function ParamParser(file, line, input, pos, requireRightParen, stopAtSemi) {
+        if (requireRightParen === void 0) { requireRightParen = true; }
+        if (stopAtSemi === void 0) { stopAtSemi = false; }
         this.file = file;
         this.line = line;
         this.input = input;
         this.pos = pos;
+        this.requireRightParen = requireRightParen;
+        this.stopAtSemi = stopAtSemi;
         this.lim = 0;
         this.done = false;
+        this.sawSemi = false;
         this.lim = input.length;
     }
-    ParamParser.prototype.skipLeadingComma = function () {
-        if (this.done)
-            return;
-        while (this.pos < this.lim) {
-            switch (this.input.charAt(this.pos++)) {
-                case ',':
-                    return;
-                case ' ':
-                case '\t':
-                case '\n':
-                case '\r':
-                    break;
-                default:
-                    return;
-            }
-        }
-    };
     // Returns null on failure to find a next argument
     ParamParser.prototype.nextArg = function () {
         if (this.done)
             return null;
         var depth = 0;
         var start = this.pos;
+        var sawRightParen = false;
+        var sawComma = false;
+        var fellOff = false;
         // Issue #7: Really should handle /* .. */ comments
         // Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
-        while (this.pos < this.lim) {
+        loop: for (;;) {
+            if (this.pos == this.lim) {
+                this.done = true;
+                fellOff = true;
+                break loop;
+            }
             switch (this.input.charAt(this.pos++)) {
+                case '/':
+                    if (this.pos < this.lim && this.input.charAt(this.pos) == '/') {
+                        this.done = true;
+                        break loop;
+                    }
+                    break;
+                case ';':
+                    if (depth == 0 && this.stopAtSemi) {
+                        this.done = true;
+                        this.sawSemi = true;
+                        break loop;
+                    }
+                    break;
                 case ',':
-                    if (depth == 0)
-                        return this.cleanupArg(this.input.substring(start, this.pos - 1));
+                    if (depth == 0) {
+                        sawComma = true;
+                        break loop;
+                    }
                     break;
                 case '(':
                 case '{':
@@ -678,7 +689,8 @@ var ParamParser = (function () {
                 case ')':
                     if (depth == 0) {
                         this.done = true;
-                        return this.cleanupArg(this.input.substring(start, this.pos - 1));
+                        sawRightParen = true;
+                        break loop;
                     }
                     depth--;
                     break;
@@ -688,6 +700,15 @@ var ParamParser = (function () {
                     throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
             }
         }
+        var result = this.cleanupArg(this.input.substring(start, fellOff ? this.pos : this.pos - 1));
+        // Don't consume it if we don't know if we're going to find it.
+        if (sawRightParen && !this.requireRightParen)
+            this.pos--;
+        if (this.done && depth > 0)
+            throw new ProgramError(this.file, this.line, "Line ended unexpectedly - still nested within parentheses.");
+        if (this.done && this.requireRightParen && !sawRightParen)
+            throw new ProgramError(this.file, this.line, "Line ended unexpectedly - expected ')'.");
+        return result;
     };
     ParamParser.prototype.allArgs = function () {
         var as = [];
@@ -993,7 +1014,8 @@ function findMethodImplFor(cls, stopAt, name) {
 // programmatic guards for that.
 var self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
 var self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
-var self_invoke_re = /SELF\.?[a-zA-Z0-9_]+\s*\(/g;
+var self_invoke_re = /SELF\.[a-zA-Z0-9]+\s*\(/g;
+var self_setter_re = /SELF\.([a-zA-Z0-9_]+)\s*(=|\+=|-=|&=|\|=|\^=)(?!=)\s*/g;
 // Name validity will be checked on the next expansion pass.
 function expandSelfAccessors() {
     for (var _i = 0; _i < userTypes.length; _i++) {
@@ -1002,6 +1024,9 @@ function expandSelfAccessors() {
             var m = _b[_a];
             var body = m.body;
             for (var k = 0; k < body.length; k++) {
+                body[k] = myExec(t.file, t.line, self_setter_re, function (file, line, s, p, m) {
+                    return replaceSetterShorthand(file, line, s, p, m, t);
+                }, body[k]);
                 body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
                     return t.name + "." + m.substring(5) + "SELF, ";
                 });
@@ -1014,6 +1039,39 @@ function expandSelfAccessors() {
             }
         }
     }
+}
+// We've eaten "SELF.id op " and need to grab a plausible RHS.
+//
+// Various complications here:
+//
+//   nested fields: SELF.x_y_z += 10
+//   stacked:  SELF.x = SELF.y = SELF.z = 0
+//   used for value:  v = (SELF.x = 10)
+//
+// Easiest fix is to change the spec so that a setter returns a value,
+// which is the rhs.  The regular assignment and Atomics.store
+// already does that.  I just changed _synchronicsStore so that it
+// does that too.  BUT SIMD STORE INSTRUCTIONS DO NOT.  Good grief.
+//
+// For now, disallow stacking of simd values (but don't detect it).
+var AssignmentOps = { "=": "set",
+    "+=": "add",
+    "-=": "sub",
+    "&=": "and",
+    "|=": "or",
+    "^=": "xor"
+};
+function replaceSetterShorthand(file, line, s, p, ms, t) {
+    //return [s, p+m.length];
+    var left = s.substring(0, p);
+    var pp = new ParamParser(file, line, s, p + ms[0].length, false, true);
+    var rhs = pp.nextArg();
+    if (!rhs)
+        throw new ProgramError(file, line, "Missing right-hand-side expression in assignment");
+    // Be sure to re-expand the RHS.
+    var substitution_left = left + " " + t.name + "." + AssignmentOps[ms[2]] + "_" + ms[1] + "(SELF, ";
+    return [(substitution_left + " " + rhs + ")" + (pp.sawSemi ? ';' : '') + " " + s.substring(pp.where)),
+        substitution_left.length];
 }
 function pasteupTypes() {
     for (var _i = 0; _i < allSources.length; _i++) {
@@ -1153,12 +1211,12 @@ var OpAttr = {
     "get": { arity: 1, atomic: "load", synchronic: "" },
     "ref": { arity: 1, atomic: "", synchronic: "" },
     "notify": { arity: 1, atomic: "", synchronic: "_synchronicNotify" },
-    "set": { arity: 2, atomic: "store", synchronic: "_synchronicStore" },
-    "add": { arity: 2, atomic: "add", synchronic: "_synchronicAdd" },
-    "sub": { arity: 2, atomic: "sub", synchronic: "_synchronicSub" },
-    "and": { arity: 2, atomic: "and", synchronic: "_synchronicAnd" },
-    "or": { arity: 2, atomic: "or", synchronic: "_synchronicOr" },
-    "xor": { arity: 2, atomic: "xor", synchronic: "_synchronicXor" },
+    "set": { arity: 2, atomic: "store", synchronic: "_synchronicStore", vanilla: "=" },
+    "add": { arity: 2, atomic: "add", synchronic: "_synchronicAdd", vanilla: "+=" },
+    "sub": { arity: 2, atomic: "sub", synchronic: "_synchronicSub", vanilla: "-=" },
+    "and": { arity: 2, atomic: "and", synchronic: "_synchronicAnd", vanilla: "&=" },
+    "or": { arity: 2, atomic: "or", synchronic: "_synchronicOr", vanilla: "|=" },
+    "xor": { arity: 2, atomic: "xor", synchronic: "_synchronicXor", vanilla: "^=" },
     "loadWhenEqual": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenEqual" },
     "loadWhenNotEqual": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenNotEqual" },
     "expectUpdate": { arity: 3, atomic: "", synchronic: "_synchronicExpectUpdate" },
@@ -1269,7 +1327,7 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
                 else if (simd)
                     expr = "SIMD." + simdType + ".store(" + mem + ", " + fieldIndex + ", " + rhs + ")";
                 else
-                    expr = mem + "[" + ref + " >> " + shift + "] = " + rhs;
+                    expr = mem + "[" + ref + " >> " + shift + "] " + OpAttr[operation].vanilla + " " + rhs;
                 break;
             case "compareExchange":
             case "expectUpdate":

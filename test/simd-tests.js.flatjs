@@ -27,4 +27,6 @@ assertEq(v.y, -2);
 assertEq(v.z, -5);
 assertEq(v.w, -8);
 
+// TODO: Test that SELF assignment shorthands work (only = should be defined).
+
 print("Done.")

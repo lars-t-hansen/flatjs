@@ -101,7 +101,9 @@ class UserDefn extends Defn {
     live = false;
     checked = false;
 
-    constructor(public file:string, public line:number, name:string, kind:DefnKind, public props:Prop[], public methods:Method[], public origin:number)  {
+    constructor(public file:string, public line:number, name:string, kind:DefnKind, public props:Prop[],
+		public methods:Method[], public origin:number)
+    {
 	super(name, kind);
     }
 
@@ -123,8 +125,10 @@ class UserDefn extends Defn {
 	    if (d.type.kind != DefnKind.Primitive)
 		return null;
 	    let prim = <PrimitiveDefn> d.type;
-	    if (prim.primKind != PrimKind.Atomic && prim.primKind != PrimKind.Synchronic)
-		return null;
+	    // add, sub, and, or, and xor are defined on plain primitives too, for
+	    // internal reasons, but that is not documented.
+	    //if (prim.primKind != PrimKind.Atomic && prim.primKind != PrimKind.Synchronic)
+	    //    return null;
 	    return d;
 	}
 	case "loadWhenEqual":
@@ -390,7 +394,7 @@ class Source {
 }
 
 function CapturedError(name) { this.name = name; }
-CapturedError.prototype = new Error;
+CapturedError.prototype = new Error("CapturedError");
 
 function InternalError(msg) { this.message = "Internal error: " + msg; console.log(this.message); }
 InternalError.prototype = new CapturedError("InternalError");
@@ -404,7 +408,7 @@ ProgramError.prototype = new CapturedError("ProgramError");
 const allSources:Source[] = [];
 
 function main(args: string[]):void {
-    //try {
+    try {
 	for ( let input_file of args ) {
 	    if (input_file.length < 10 ||
 		(input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
@@ -427,15 +431,13 @@ function main(args: string[]):void {
 
 	for ( let s of allSources )
 	    fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
-    /*
     }
     catch (e) {
 	if (e instanceof CapturedError)
-	    console.log(e.msg);
+	    console.log(e.message);
 	else
 	    throw e;
     }
-    */
 }
 
 const Ws = "\\s+";
@@ -583,41 +585,51 @@ class ParamParser {
     private lim = 0;
     private done = false;
 
-    constructor(private file:string, private line:number, private input:string, private pos:number) {
+    sawSemi = false;
+
+    constructor(private file:string, private line:number, private input:string, private pos:number,
+		private requireRightParen=true, private stopAtSemi=false)
+    {
 	this.lim = input.length;
     }
 
-    skipLeadingComma():void {
-	if (this.done)
-	    return;
-	while (this.pos < this.lim) {
-	    switch (this.input.charAt(this.pos++)) {
-	    case ',':
-		return;
-	    case ' ':
-	    case '\t':
-	    case '\n':
-	    case '\r':
-		break;
-	    default:
-		return;
-	    }
-	}
-    }
-
     // Returns null on failure to find a next argument
-    private nextArg():string {
+    nextArg():string {
 	if (this.done)
 	    return null;
 	let depth = 0;
 	let start = this.pos;
+	let sawRightParen = false;
+	let sawComma = false;
+	let fellOff = false;
 	// Issue #7: Really should handle /* .. */ comments
 	// Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
-	while (this.pos < this.lim) {
+      loop:
+	for (;;) {
+	    if (this.pos == this.lim) {
+		this.done = true;
+		fellOff = true;
+		break loop;
+	    }
 	    switch (this.input.charAt(this.pos++)) {
+	    case '/':
+		if (this.pos < this.lim && this.input.charAt(this.pos) == '/') {
+		    this.done = true;
+		    break loop;
+		}
+		break;
+	    case ';':
+		if (depth == 0 && this.stopAtSemi) {
+		    this.done = true;
+		    this.sawSemi = true;
+		    break loop;
+		}
+		break;
 	    case ',':
-		if (depth == 0)
-		    return this.cleanupArg(this.input.substring(start, this.pos-1));
+		if (depth == 0) {
+		    sawComma = true;
+		    break loop;
+		}
 		break;
 	    case '(':
 	    case '{':
@@ -631,7 +643,8 @@ class ParamParser {
 	    case ')':
 		if (depth == 0) {
 		    this.done = true;
-		    return this.cleanupArg(this.input.substring(start, this.pos-1));
+		    sawRightParen = true;
+		    break loop;
 		}
 		depth--;
 		break;
@@ -641,6 +654,19 @@ class ParamParser {
 		throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
 	    }
 	}
+
+	var result = this.cleanupArg(this.input.substring(start, fellOff ? this.pos : this.pos-1));
+
+	// Don't consume it if we don't know if we're going to find it.
+	if (sawRightParen && !this.requireRightParen)
+	    this.pos--;
+
+	if (this.done && depth > 0)
+	    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - still nested within parentheses.");
+	if (this.done && this.requireRightParen && !sawRightParen)
+	    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - expected ')'.");
+
+	return result;
     }
 
     allArgs():string[] {
@@ -959,7 +985,8 @@ function findMethodImplFor(cls:ClassDefn, stopAt:ClassDefn, name:string):string 
 
 const self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
 const self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
-const self_invoke_re = /SELF\.?[a-zA-Z0-9_]+\s*\(/g;
+const self_invoke_re = /SELF\.[a-zA-Z0-9]+\s*\(/g;
+const self_setter_re = /SELF\.([a-zA-Z0-9_]+)\s*(=|\+=|-=|&=|\|=|\^=)(?!=)\s*/g;
 
 // Name validity will be checked on the next expansion pass.
 
@@ -968,6 +995,11 @@ function expandSelfAccessors():void {
 	for ( let m of t.methods ) {
 	    let body = m.body;
 	    for ( let k=0 ; k < body.length ; k++ ) {
+		body[k] = myExec(t.file, t.line, self_setter_re,
+				 function (file:string, line:number, s:string, p:number, m:RegExpExecArray):[string,number] {
+				     return replaceSetterShorthand(file, line, s, p, m, t);
+				 },
+				 body[k]);
 		body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
 		    return t.name + "." + m.substring(5) + "SELF, ";
 		});
@@ -980,6 +1012,43 @@ function expandSelfAccessors():void {
 	    }
 	}
     }
+}
+
+// We've eaten "SELF.id op " and need to grab a plausible RHS.
+//
+// Various complications here:
+//
+//   nested fields: SELF.x_y_z += 10
+//   stacked:  SELF.x = SELF.y = SELF.z = 0
+//   used for value:  v = (SELF.x = 10)
+//
+// Easiest fix is to change the spec so that a setter returns a value,
+// which is the rhs.  The regular assignment and Atomics.store
+// already does that.  I just changed _synchronicsStore so that it
+// does that too.  BUT SIMD STORE INSTRUCTIONS DO NOT.  Good grief.
+//
+// For now, disallow stacking of simd values (but don't detect it).
+
+const AssignmentOps =
+    { "=": "set",
+      "+=": "add",
+      "-=": "sub",
+      "&=": "and",
+      "|=": "or",
+      "^=": "xor"
+    };
+
+function replaceSetterShorthand(file:string, line:number, s:string, p:number, ms:RegExpExecArray, t:UserDefn):[string,number] {
+    //return [s, p+m.length];
+    let left = s.substring(0,p);
+    let pp = new ParamParser(file, line, s, p+ms[0].length, false, true);
+    let rhs = pp.nextArg();
+    if (!rhs)
+        throw new ProgramError(file, line, "Missing right-hand-side expression in assignment");
+    // Be sure to re-expand the RHS.
+    let substitution_left = `${left} ${t.name}.${AssignmentOps[ms[2]]}_${ms[1]}(SELF, `;
+    return [`${substitution_left} ${rhs})${pp.sawSemi ? ';' : ''} ${s.substring(pp.where)}`,
+	    substitution_left.length];
 }
 
 function pasteupTypes():void {
@@ -1126,12 +1195,12 @@ const OpAttr = {
     "get": { arity: 1, atomic: "load", synchronic: "" },
     "ref": { arity: 1, atomic: "", synchronic: "" },
     "notify": { arity: 1, atomic: "", synchronic: "_synchronicNotify" },
-    "set": { arity: 2, atomic: "store", synchronic: "_synchronicStore" },
-    "add": { arity: 2, atomic: "add", synchronic: "_synchronicAdd" },
-    "sub": { arity: 2, atomic: "sub", synchronic: "_synchronicSub" },
-    "and": { arity: 2, atomic: "and", synchronic: "_synchronicAnd" },
-    "or": { arity: 2, atomic: "or", synchronic: "_synchronicOr" },
-    "xor": { arity: 2, atomic: "xor", synchronic: "_synchronicXor" },
+    "set": { arity: 2, atomic: "store", synchronic: "_synchronicStore", vanilla: "=" },
+    "add": { arity: 2, atomic: "add", synchronic: "_synchronicAdd", vanilla: "+=" },
+    "sub": { arity: 2, atomic: "sub", synchronic: "_synchronicSub", vanilla: "-=" },
+    "and": { arity: 2, atomic: "and", synchronic: "_synchronicAnd", vanilla: "&=" },
+    "or": { arity: 2, atomic: "or", synchronic: "_synchronicOr", vanilla: "|=" },
+    "xor": { arity: 2, atomic: "xor", synchronic: "_synchronicXor", vanilla: "^=" },
     "loadWhenEqual": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenEqual" },
     "loadWhenNotEqual": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenNotEqual" },
     "expectUpdate": { arity: 3, atomic: "", synchronic: "_synchronicExpectUpdate" },
@@ -1254,7 +1323,7 @@ function loadFromRef(file:string, line:number,
 	    else if (simd)
 		expr = `SIMD.${simdType}.store(${mem}, ${fieldIndex}, ${rhs})`;
 	    else
-		expr = `${mem}[${ref} >> ${shift}] = ${rhs}`;
+		expr = `${mem}[${ref} >> ${shift}] ${OpAttr[operation].vanilla} ${rhs}`;
 	    break;
 	case "compareExchange":
 	case "expectUpdate":
