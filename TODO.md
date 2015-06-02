@@ -48,8 +48,11 @@
   https://github.com/johnmccutchan/ecmascript_simd
 * Structs should be allowed to inherit from other structs
 * In-line fixed-length array types, these are effectively unnamed struct
-  types, eg, xs: array(int32,10)
+  types, eg, xs: array(int32,10).  This more or less falls out
+  when switching to more TypedObject-like syntax.
 * Nested array types, these fit in with in-line fixed-length arrays.
+  This, too, is a straightforward consequence of TypedObject-like
+  syntax.
 * Private properties would be helpful: "private x : int32"
 * Private methods ditto.
 * Final classes would be helpful (devirtualization, privacy)
