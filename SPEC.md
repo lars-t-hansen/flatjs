@@ -27,6 +27,19 @@ appear here and there to make recognition easier.  Please don't get
 hung up on this, it's mostly a matter of programming to fix it but that
 is not my focus right now.
 
+The translator is currently implemented by means of a fairly crude
+regular expression matcher.  Occasionally this leads to problems.  Some
+things to watch out for:
+
+* Do not use expressions containing strings, comments, or regular expressions
+  in the arguments to accessor macros (including array accessors).
+* Do not split calls to accessors across multiple source lines.
+* Occasionally, the translator fails to parenthesize code correctly because
+  it can't insert parentheses blindly as that interacts badly with
+  automatic semicolon insertion (yay JavaScript).  This will sometimes lead
+  to mysterious errors.  A look at the generated code is usually enough
+  to figure out what's going on.
+
 ## Programs
 
 A program comprises a set of files that are processed together by the FlatJS
@@ -300,44 +313,66 @@ FlatJS arrays are primitive reference types that do /not/ carry their
 length: they are simply a sequence of elements of a given type within
 memory.
 
-Allocating an array of type T of length n requires only allocating
+Allocating an array of primitive or structure type T of length n requires only allocating
 memory for n*T.SIZE.
 
-* R.array_get(ptr, i)  => Read the ith element of an array of R whose base address is ptr.  Not bounds checked.  If the base type of the array is a structure type this will only work if the type has a @get method.
-* R.array_set(ptr, i, v) => Set ditto / @set
+Allocating an array of class type T of length n requires only allocating
+memory for n*int32.SIZE.
 
-These accessors are macro-expanded, as for named field accessors.
+### Translation
+
+Suppose A is some type.
+
+* A.array_get(ptr, i) reads the ith element of an array of A
+  whose base address is ptr.  Not bounds checked.  If the base
+  type of the array is a structure type this will only work if
+  the type has a ```@get``` method.
+* A.array_set(ptr, i, v) writes the ith element of an array of A
+  whose base address is ptr.  Not bounds checked.  If the base
+  type of the array is a structure type this will only work if
+  the type has an ```@set``` method.
 
 
 ## @new macro
 
 An instance of the class type may be allocated and initialized with
-the operator-like @new macro.  Specifically, @new T for FlatJS class
+the operator-like ```@new``` macro.  Specifically, ```@new T``` for FlatJS class
 type T expands into this:
-
-  T.initInstance(FlatJS.alloc(T.SIZE, T.ALIGN))
-
-An array of values may also be allocated and initialized with @new.
-Specifically, @new array(T,n) for FlatJS value type T expands into
+```
+  T.initInstance(FlatJS.allocOrThrow(T.SIZE, T.ALIGN))
+```
+An array may also be allocated and initialized with ```@new```.
+Specifically, ```@new array(T,n)``` for type T expands into
 this:
-
-  FlatJS.alloc(n*<size>, <align>)
-
-where <size> is the size of an int32 if T is a reference type or the
-size of the value type T otherwise, and <align> is 4 if T is a
-reference type and the alignment of value type T otherwise.
+```
+  FlatJS.allocOrThrow(n*<size>, <align>)
+```
+where *size* is int32.SIZE if T is a reference type or T.SIZE
+otherwise, and *align* is int32.ALIGN if T is a reference type
+and T.ALIGN otherwise.
 
 
 ## SELF accessor macros
 
-Inside the method for a struct or class R with a suite of accessor
-methods M1..Mn, there will be defined non-hygienic macros
-SELF.M1..SELF.Mk.  A reference to SELF.Mj(arg,...) is rewritten
-as a reference to R.Mj(SELF, arg, ...).
+Inside the method for a struct or class T with a suite of accessor
+methods F1..Fn, there will be defined non-hygienic macros
+SELF.F1..SELF.Fk.  A reference to SELF.Fj(arg,...) is rewritten
+at translation time as a reference to T.Fj(SELF, arg, ...).
 
-In the special case of a field getter Mg, which takes only the self
+In the special case of a field getter Fg, which takes only the SELF
 argument, the form of the macro invocation shall be SELF.Mg, that
 is, without the empty parameter list.
+
+Note that at present, methods on self cannot be invoked using
+this syntax.
+
+
+## Global macros
+
+All field accessors to simple fields are macro-expanded at translation time.
+
+Note carefully that the field accessors that are macro-expanded are not,
+in fact, available as properties on the type objects at run-time.
 
 
 ## Environment
@@ -348,11 +383,7 @@ are translated from FlatJS.
 
 For each primitive type (int8, uint8, int16, uint16, int32, uint32,
 float32, float64, int32x4, float32x4, float64x2) there is a global
-variable with the type name containing the following properties:
-
-* SIZE is the size in bytes of the type
-* ALIGN is the required alignment in bytes of the type
-* NAME is the name of the type
+variable with the type name.
 
 There is a global variable called NULL whose value is the null
 pointer, whose integer value is zero.
@@ -385,26 +416,14 @@ The allocator operates on the flat memory and is thread-safe if that
 memory is shared.
 
 There is a new global constructor called MemoryError, derived from
-Error.  It is thrown on some allocation failures.
+Error.  It is thrown by allocOrThrow if there is not enough memory to
+fulfill the request.
 
 ## How to run the translator
 
-The translator has to be run on all files in the application
-simultaneously, and will resolve all types in all files.  It would
-normally output a file for each input file.
-
-
-*** WARNING The translator is currently implemented by means of a
-            fairly crude regular expression matcher.  Occasionally
-            this leads to problems.
-
-            * Do not use expressions containing commas or parentheses
-            in the arguments to accessor macros (including array
-            accessors).
-
-            * Do not split calls to accessor macros across multiple
-            lines.
-
+The translator has to be run on all files in the program
+simultaneously, and will resolve all types in all files.  It will
+output a file for each input file.
 
 ## Type IDs
 
@@ -423,11 +442,3 @@ probably OK in practice.)
 
 Eg, O>Triangle>Surface>> is a unique identifier but does not help us
 catch errors easily.
-
-
-## Rationale
-
-Struct types and class types are separate because class types need
-different initialization (vtable, chiefly).  By keeping these
-separate, it becomes sensible to always give a class type a vtable and
-never pay for that in a struct.
