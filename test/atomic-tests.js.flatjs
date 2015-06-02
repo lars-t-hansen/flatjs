@@ -4,6 +4,8 @@ load("../libflatjs.js");
 var ab = new SharedArrayBuffer(65536);
 FlatJS.init(ab, true);
 
+// Atomic fields of class
+
 @flatjs class Counter {
     count:atomic int32
     xyzzy:atomic uint8
@@ -36,5 +38,16 @@ assertEq(Counter.count(c), 0x5D);
 
 Counter.add_xyzzy(c, 384);
 assertEq(Counter.xyzzy(c), 384%256);
+
+// Atomic fields of structures within array
+
+@flatjs struct Cnt {
+    count:atomic int32
+} @end
+
+var p = @new array(Cnt, 10);
+
+Cnt.array_add_count(p, 5, 1);
+assertEq(Cnt.array_get_count(p, 5), 1);
 
 console.log("Done");

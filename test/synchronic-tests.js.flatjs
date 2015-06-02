@@ -4,6 +4,8 @@ load("../libflatjs.js");
 var ab = new SharedArrayBuffer(65536);
 FlatJS.init(ab, true);
 
+// Synchronic fields of class
+
 @flatjs class Counter {
     count:synchronic int32
     xyzzy:synchronic uint8
@@ -36,5 +38,49 @@ assertEq(Counter.count(c), 0x5D);
 
 Counter.add_xyzzy(c, 384);
 assertEq(Counter.xyzzy(c), 384%256);
+
+// Synchronic fields of structures within array
+
+@flatjs struct Cnt {
+    count:synchronic int32
+} @end
+
+var p = @new array(Cnt, 10);
+
+Cnt.array_add_count(p, 5, 1);
+assertEq(Cnt.array_get_count(p, 5), 1);
+
+setSharedArrayBuffer(ab);
+Counter.set_count(c, 0);
+
+evalInWorker(`
+load("../libflatjs.js");
+var ab = getSharedArrayBuffer();
+FlatJS.init(ab);
+
+var c = ${c};
+
+// This is gross.  Counter is defined in *this file* so its macro
+// definitions are visible here and will be replaced, and that's
+// enough to make this test work.  But if we had methods to invoke
+// they would not work, because the Counter object is not visible
+// within the worker's code.
+//
+// That would normally be fixed by putting the worker program in a
+// file and just having a one-liner program here, to load that file.
+// That file could be preprocessed independently.
+
+Counter.loadWhenNotEqual_count(c, 0);
+var then = Date.now();
+sleep(1);
+Counter.set_count(c, 2);
+console.log("Should be about 1000: " + (Date.now() - then));
+`);
+
+sleep(1);
+var then = Date.now();
+Counter.set_count(c, 1);
+Counter.loadWhenNotEqual_count(c, 1);
+console.log("Should be about 1000: " + (Date.now() - then));
 
 console.log("Done");

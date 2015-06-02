@@ -110,16 +110,16 @@ class UserDefn extends Defn {
 	if (!d)
 	    return null;
 	switch (operation) {
-	case "get_":
-	case "set_":
-	case "ref_":
+	case "get":
+	case "set":
+	case "ref":
 	    return d;
-	case "add_":
-	case "sub_":
-	case "and_":
-	case "or_":
-	case "xor_":
-	case "compareExchange_": {
+	case "add":
+	case "sub":
+	case "and":
+	case "or":
+	case "xor":
+	case "compareExchange": {
 	    if (d.type.kind != DefnKind.Primitive)
 		return null;
 	    let prim = <PrimitiveDefn> d.type;
@@ -127,10 +127,10 @@ class UserDefn extends Defn {
 		return null;
 	    return d;
 	}
-	case "loadWhenEqual_":
-	case "loadWhenNotEqual_":
-	case "expectUpdate_":
-	case "notify_": {
+	case "loadWhenEqual":
+	case "loadWhenNotEqual":
+	case "expectUpdate":
+	case "notify": {
 	    if (d.type.kind != DefnKind.Primitive)
 		return null;
 	    let prim = <PrimitiveDefn> d.type;
@@ -389,32 +389,22 @@ class Source {
     constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public lines:string[]) {}
 }
 
-class CapturedError {
-    constructor(public msg:string) {}
-}
+function CapturedError(name) { this.name = name; }
+CapturedError.prototype = new Error;
 
-class InternalError extends CapturedError {
-    constructor(msg:string) {
-	super("Internal error: " + msg);
-    }
-}
+function InternalError(msg) { this.message = "Internal error: " + msg; console.log(this.message); }
+InternalError.prototype = new CapturedError("InternalError");
 
-class UsageError extends CapturedError {
-    constructor(msg:string) {
-	super("Usage error: " + msg);
-    }
-}
+function UsageError(msg) { this.message = "Usage error: " + msg; }
+UsageError.prototype = new CapturedError("UsageError");
 
-class ProgramError extends CapturedError {
-    constructor(file:string, line:number, msg:string) {
-	super(file + ":" + line + ": " + msg);
-    }
-}
+function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; };
+ProgramError.prototype = new CapturedError("ProgramError");
 
 const allSources:Source[] = [];
 
 function main(args: string[]):void {
-    try {
+    //try {
 	for ( let input_file of args ) {
 	    if (input_file.length < 10 ||
 		(input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
@@ -437,6 +427,7 @@ function main(args: string[]):void {
 
 	for ( let s of allSources )
 	    fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
+    /*
     }
     catch (e) {
 	if (e instanceof CapturedError)
@@ -444,6 +435,7 @@ function main(args: string[]):void {
 	else
 	    throw e;
     }
+    */
 }
 
 const Ws = "\\s+";
@@ -1008,8 +1000,8 @@ function expandGlobalAccessorsAndMacros():void {
 // represented as a class, with a ton of methods and locals (eg for
 // file and line), performing expansion on one line.
 
-const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(add_|sub_|and_|or_|xor_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_|notify_|set_|ref_)?([a-zA-Z0-9_]+)\s*\(/g;
-const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
+const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(?:(set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)_)?([a-zA-Z0-9_]+)\s*\(/g;
+const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
 const new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
 
 function expandMacrosIn(file:string, line:number, text:string):string {
@@ -1126,19 +1118,19 @@ function cleanupArg(s:string):string {
 // Here, arity includes the self argument
 
 const OpAttr = {
-    "get_": { arity: 1, atomic: "load", synchronic: "" },
-    "ref_": { arity: 1, atomic: "", synchronic: "" },
-    "notify_": { arity: 1, atomic: "", synchronic: "_synchronicNotify" },
-    "set_": { arity: 2, atomic: "store", synchronic: "_synchronicStore" },
-    "add_": { arity: 2, atomic: "add", synchronic: "_synchronicAdd" },
-    "sub_": { arity: 2, atomic: "sub", synchronic: "_synchronicSub" },
-    "and_": { arity: 2, atomic: "and", synchronic: "_synchronicAnd" },
-    "or_": { arity: 2, atomic: "or", synchronic: "_synchronicOr" },
-    "xor_": { arity: 2, atomic: "xor", synchronic: "_synchronicXor" },
-    "loadWhenEqual_": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenEqual" },
-    "loadWhenNotEqual_": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenNotEqual" },
-    "expectUpdate_": { arity: 3, atomic: "", synchronic: "_synchronicExpectUpdate" },
-    "compareExchange_": { arity: 3, atomic: "compareExchange", synchronic: "_synchronicCompareExchange" },
+    "get": { arity: 1, atomic: "load", synchronic: "" },
+    "ref": { arity: 1, atomic: "", synchronic: "" },
+    "notify": { arity: 1, atomic: "", synchronic: "_synchronicNotify" },
+    "set": { arity: 2, atomic: "store", synchronic: "_synchronicStore" },
+    "add": { arity: 2, atomic: "add", synchronic: "_synchronicAdd" },
+    "sub": { arity: 2, atomic: "sub", synchronic: "_synchronicSub" },
+    "and": { arity: 2, atomic: "and", synchronic: "_synchronicAnd" },
+    "or": { arity: 2, atomic: "or", synchronic: "_synchronicOr" },
+    "xor": { arity: 2, atomic: "xor", synchronic: "_synchronicXor" },
+    "loadWhenEqual": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenEqual" },
+    "loadWhenNotEqual": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenNotEqual" },
+    "expectUpdate": { arity: 3, atomic: "", synchronic: "_synchronicExpectUpdate" },
+    "compareExchange": { arity: 3, atomic: "compareExchange", synchronic: "_synchronicCompareExchange" },
 };
 
 function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
@@ -1151,7 +1143,7 @@ function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     let left = s.substring(0,p);
 
     if (!operation)
-	operation = "get_";
+	operation = "get";
     let ty = knownTypes.get(className);
     if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
 	return nomatch;
@@ -1171,13 +1163,13 @@ function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
     if (OpAttr[operation].arity != as.length) {
-	console.log(`Bad set arity ${propName} / ${as.length}`);
+	console.log(`Bad accessor arity ${propName} / ${as.length}`);
 	return nomatch;
     };
 
     // Issue #16: Watch it: Parens interact with semicolon insertion.
     let ref = `(${expandMacrosIn(file, line, endstrip(as[0]))} + ${fld.offset})`;
-    if (operation == "ref_") {
+    if (operation == "ref") {
 	return [left + ref + s.substring(pp.where),
 		left.length + ref.length];
     }
@@ -1223,7 +1215,7 @@ function loadFromRef(file:string, line:number,
 	    rhs2 = expandMacrosIn(file, line, endstrip(rhs2));
 	    break;
 	default:
-	    throw new InternalError("No operator: " + operation);
+	    throw new InternalError("No operator: " + operation + " " + s);
 	}
 	let fieldIndex = "";
 	if (synchronic)
@@ -1231,7 +1223,7 @@ function loadFromRef(file:string, line:number,
 	else
 	    fieldIndex = `${ref} >> ${shift}`;
 	switch (operation) {
-	case "get_":
+	case "get":
 	    if (atomic || synchronic)
 		expr = `Atomics.load(${mem}, ${fieldIndex})`;
 	    else if (simd)
@@ -1239,17 +1231,17 @@ function loadFromRef(file:string, line:number,
 	    else
 		expr = `${mem}[${fieldIndex}]`;
 	    break;
-	case "notify_":
+	case "notify":
 	    expr = `FlatJS.${OpAttr[operation].synchronic}(${ref})`;
 	    break;
-	case "set_":
-	case "add_":
-	case "sub_":
-	case "and_":
-	case "or_":
-	case "xor_":
-	case "loadWhenEqual_":
-	case "loadWhenNotEqual_":
+	case "set":
+	case "add":
+	case "sub":
+	case "and":
+	case "or":
+	case "xor":
+	case "loadWhenEqual":
+	case "loadWhenNotEqual":
 	    if (atomic)
 		expr = `Atomics.${OpAttr[operation].atomic}(${mem}, ${fieldIndex}, ${rhs})`;
 	    else if (synchronic)
@@ -1259,15 +1251,15 @@ function loadFromRef(file:string, line:number,
 	    else
 		expr = `${mem}[${ref} >> ${shift}] = ${rhs}`;
 	    break;
-	case "compareExchange_":
-	case "expectUpdate_":
+	case "compareExchange":
+	case "expectUpdate":
 	    if (atomic)
 		expr = `Atomics.${OpAttr[operation].atomic}(${mem}, ${fieldIndex}, ${rhs}, ${rhs2})`;
 	    else
 		expr = `FlatJS.${OpAttr[operation].synchronic}(${ref}, ${mem}, ${fieldIndex}, ${rhs}, ${rhs2})`;
 	    break;
 	default:
-	    throw new InternalError("No operator: " + operation);
+	    throw new InternalError("No operator: " + operation + " " + s);
 	}
 	// Issue #16: Parens interact with semicolon insertion.
 	//expr = `(${expr})`;
@@ -1280,11 +1272,11 @@ function loadFromRef(file:string, line:number,
 	// and should be rewritten as a call to the getter, passing the field reference.
 	// Ditto setter, which will also pass secondArg.
 	switch (operation) {
-	case "get_":
+	case "get":
 	    if (t.hasGetMethod)
 		expr = `${t.name}._get_impl(${ref})`;
 	    break;
-	case "set_":
+	case "set":
 	    if (t.hasSetMethod)
 		expr = `${t.name}._set_impl(${ref}, ${expandMacrosIn(file, line, endstrip(rhs))})`;
 	    break;
@@ -1319,15 +1311,10 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
 
-    // Issue #6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
-
-    // FIXME: atomics on fields of structs within array, syntax would be
-    // T.array_add_x(p,v), T.array_expectUpdate_y(p, v, t).
-
-    switch (operation) {
-    case "get": if (as.length != 2) return nomatch; operation = "get_"; break;
-    case "set": if (as.length != 3) return nomatch; operation = "set_"; break;
-    }
+    if (OpAttr[operation].arity+1 != as.length) {
+	warning(file, line, `Wrong arity for accessor ${operation} / ${as.length}`);
+	return nomatch;
+    };
 
     let multiplier = type.elementSize;
     if (type.kind == DefnKind.Primitive) {
@@ -1411,6 +1398,10 @@ function log2(x:number):number {
 	x >>= 1;
     }
     return i;
+}
+
+function warning(file:string, line:number, msg:string):void {
+    console.log(file + ":" + line + ": Warning: " + msg);
 }
 
 main(process.argv.slice(2));

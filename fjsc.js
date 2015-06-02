@@ -132,16 +132,16 @@ var UserDefn = (function (_super) {
         if (!d)
             return null;
         switch (operation) {
-            case "get_":
-            case "set_":
-            case "ref_":
+            case "get":
+            case "set":
+            case "ref":
                 return d;
-            case "add_":
-            case "sub_":
-            case "and_":
-            case "or_":
-            case "xor_":
-            case "compareExchange_": {
+            case "add":
+            case "sub":
+            case "and":
+            case "or":
+            case "xor":
+            case "compareExchange": {
                 if (d.type.kind != DefnKind.Primitive)
                     return null;
                 var prim = d.type;
@@ -149,10 +149,10 @@ var UserDefn = (function (_super) {
                     return null;
                 return d;
             }
-            case "loadWhenEqual_":
-            case "loadWhenNotEqual_":
-            case "expectUpdate_":
-            case "notify_": {
+            case "loadWhenEqual":
+            case "loadWhenNotEqual":
+            case "expectUpdate":
+            case "notify": {
                 if (d.type.kind != DefnKind.Primitive)
                     return null;
                 var prim = d.type;
@@ -441,66 +441,50 @@ var Source = (function () {
     }
     return Source;
 })();
-var CapturedError = (function () {
-    function CapturedError(msg) {
-        this.msg = msg;
-    }
-    return CapturedError;
-})();
-var InternalError = (function (_super) {
-    __extends(InternalError, _super);
-    function InternalError(msg) {
-        _super.call(this, "Internal error: " + msg);
-    }
-    return InternalError;
-})(CapturedError);
-var UsageError = (function (_super) {
-    __extends(UsageError, _super);
-    function UsageError(msg) {
-        _super.call(this, "Usage error: " + msg);
-    }
-    return UsageError;
-})(CapturedError);
-var ProgramError = (function (_super) {
-    __extends(ProgramError, _super);
-    function ProgramError(file, line, msg) {
-        _super.call(this, file + ":" + line + ": " + msg);
-    }
-    return ProgramError;
-})(CapturedError);
+function CapturedError(name) { this.name = name; }
+CapturedError.prototype = new Error;
+function InternalError(msg) { this.message = "Internal error: " + msg; console.log(this.message); }
+InternalError.prototype = new CapturedError("InternalError");
+function UsageError(msg) { this.message = "Usage error: " + msg; }
+UsageError.prototype = new CapturedError("UsageError");
+function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; }
+;
+ProgramError.prototype = new CapturedError("ProgramError");
 var allSources = [];
 function main(args) {
-    try {
-        for (var _i = 0; _i < args.length; _i++) {
-            var input_file = args[_i];
-            if (input_file.length < 10 ||
-                (input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
-                throw new UsageError("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
-            var text = fs.readFileSync(input_file, "utf8");
-            var lines = text.split("\n");
-            var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
-            var output_file = input_file.replace(/\.flatjs$/, "");
-            allSources.push(new Source(input_file, output_file, defs, residual));
-        }
-        buildTypeMap();
-        resolveTypeRefs();
-        checkRecursion();
-        layoutTypes();
-        createVirtuals();
-        expandSelfAccessors();
-        pasteupTypes();
-        expandGlobalAccessorsAndMacros();
-        for (var _b = 0; _b < allSources.length; _b++) {
-            var s = allSources[_b];
-            fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
-        }
+    //try {
+    for (var _i = 0; _i < args.length; _i++) {
+        var input_file = args[_i];
+        if (input_file.length < 10 ||
+            (input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
+            throw new UsageError("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
+        var text = fs.readFileSync(input_file, "utf8");
+        var lines = text.split("\n");
+        var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
+        var output_file = input_file.replace(/\.flatjs$/, "");
+        allSources.push(new Source(input_file, output_file, defs, residual));
+    }
+    buildTypeMap();
+    resolveTypeRefs();
+    checkRecursion();
+    layoutTypes();
+    createVirtuals();
+    expandSelfAccessors();
+    pasteupTypes();
+    expandGlobalAccessorsAndMacros();
+    for (var _b = 0; _b < allSources.length; _b++) {
+        var s = allSources[_b];
+        fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
+    }
+    /*
     }
     catch (e) {
-        if (e instanceof CapturedError)
-            console.log(e.msg);
-        else
-            throw e;
+    if (e instanceof CapturedError)
+        console.log(e.msg);
+    else
+        throw e;
     }
+    */
 }
 var Ws = "\\s+";
 var Os = "\\s*";
@@ -1050,8 +1034,8 @@ function expandGlobalAccessorsAndMacros() {
 // TODO: it's likely that the expandMacrosIn is really better
 // represented as a class, with a ton of methods and locals (eg for
 // file and line), performing expansion on one line.
-var acc_re = /([A-Za-z][A-Za-z0-9]*)\.(add_|sub_|and_|or_|xor_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_|notify_|set_|ref_)?([a-zA-Z0-9_]+)\s*\(/g;
-var arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
+var acc_re = /([A-Za-z][A-Za-z0-9]*)\.(?:(set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)_)?([a-zA-Z0-9_]+)\s*\(/g;
+var arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
 var new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
 function expandMacrosIn(file, line, text) {
     return myExec(file, line, new_re, newMacro, myExec(file, line, arr_re, arrMacro, myExec(file, line, acc_re, accMacro, text)));
@@ -1162,19 +1146,19 @@ function cleanupArg(s) {
 }
 // Here, arity includes the self argument
 var OpAttr = {
-    "get_": { arity: 1, atomic: "load", synchronic: "" },
-    "ref_": { arity: 1, atomic: "", synchronic: "" },
-    "notify_": { arity: 1, atomic: "", synchronic: "_synchronicNotify" },
-    "set_": { arity: 2, atomic: "store", synchronic: "_synchronicStore" },
-    "add_": { arity: 2, atomic: "add", synchronic: "_synchronicAdd" },
-    "sub_": { arity: 2, atomic: "sub", synchronic: "_synchronicSub" },
-    "and_": { arity: 2, atomic: "and", synchronic: "_synchronicAnd" },
-    "or_": { arity: 2, atomic: "or", synchronic: "_synchronicOr" },
-    "xor_": { arity: 2, atomic: "xor", synchronic: "_synchronicXor" },
-    "loadWhenEqual_": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenEqual" },
-    "loadWhenNotEqual_": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenNotEqual" },
-    "expectUpdate_": { arity: 3, atomic: "", synchronic: "_synchronicExpectUpdate" },
-    "compareExchange_": { arity: 3, atomic: "compareExchange", synchronic: "_synchronicCompareExchange" },
+    "get": { arity: 1, atomic: "load", synchronic: "" },
+    "ref": { arity: 1, atomic: "", synchronic: "" },
+    "notify": { arity: 1, atomic: "", synchronic: "_synchronicNotify" },
+    "set": { arity: 2, atomic: "store", synchronic: "_synchronicStore" },
+    "add": { arity: 2, atomic: "add", synchronic: "_synchronicAdd" },
+    "sub": { arity: 2, atomic: "sub", synchronic: "_synchronicSub" },
+    "and": { arity: 2, atomic: "and", synchronic: "_synchronicAnd" },
+    "or": { arity: 2, atomic: "or", synchronic: "_synchronicOr" },
+    "xor": { arity: 2, atomic: "xor", synchronic: "_synchronicXor" },
+    "loadWhenEqual": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenEqual" },
+    "loadWhenNotEqual": { arity: 2, atomic: "", synchronic: "_synchronicLoadWhenNotEqual" },
+    "expectUpdate": { arity: 3, atomic: "", synchronic: "_synchronicExpectUpdate" },
+    "compareExchange": { arity: 3, atomic: "compareExchange", synchronic: "_synchronicCompareExchange" },
 };
 function accMacro(file, line, s, p, ms) {
     var m = ms[0];
@@ -1184,7 +1168,7 @@ function accMacro(file, line, s, p, ms) {
     var nomatch = [s, p + m.length];
     var left = s.substring(0, p);
     if (!operation)
-        operation = "get_";
+        operation = "get";
     var ty = knownTypes.get(className);
     if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
         return nomatch;
@@ -1200,13 +1184,13 @@ function accMacro(file, line, s, p, ms) {
     var pp = new ParamParser(file, line, s, p + m.length);
     var as = (pp).allArgs();
     if (OpAttr[operation].arity != as.length) {
-        console.log("Bad set arity " + propName + " / " + as.length);
+        console.log("Bad accessor arity " + propName + " / " + as.length);
         return nomatch;
     }
     ;
     // Issue #16: Watch it: Parens interact with semicolon insertion.
     var ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + " + " + fld.offset + ")";
-    if (operation == "ref_") {
+    if (operation == "ref") {
         return [left + ref + s.substring(pp.where),
             left.length + ref.length];
     }
@@ -1247,7 +1231,7 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
                 rhs2 = expandMacrosIn(file, line, endstrip(rhs2));
                 break;
             default:
-                throw new InternalError("No operator: " + operation);
+                throw new InternalError("No operator: " + operation + " " + s);
         }
         var fieldIndex = "";
         if (synchronic)
@@ -1255,7 +1239,7 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
         else
             fieldIndex = ref + " >> " + shift;
         switch (operation) {
-            case "get_":
+            case "get":
                 if (atomic || synchronic)
                     expr = "Atomics.load(" + mem + ", " + fieldIndex + ")";
                 else if (simd)
@@ -1263,17 +1247,17 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
                 else
                     expr = mem + "[" + fieldIndex + "]";
                 break;
-            case "notify_":
+            case "notify":
                 expr = "FlatJS." + OpAttr[operation].synchronic + "(" + ref + ")";
                 break;
-            case "set_":
-            case "add_":
-            case "sub_":
-            case "and_":
-            case "or_":
-            case "xor_":
-            case "loadWhenEqual_":
-            case "loadWhenNotEqual_":
+            case "set":
+            case "add":
+            case "sub":
+            case "and":
+            case "or":
+            case "xor":
+            case "loadWhenEqual":
+            case "loadWhenNotEqual":
                 if (atomic)
                     expr = "Atomics." + OpAttr[operation].atomic + "(" + mem + ", " + fieldIndex + ", " + rhs + ")";
                 else if (synchronic)
@@ -1283,15 +1267,15 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
                 else
                     expr = mem + "[" + ref + " >> " + shift + "] = " + rhs;
                 break;
-            case "compareExchange_":
-            case "expectUpdate_":
+            case "compareExchange":
+            case "expectUpdate":
                 if (atomic)
                     expr = "Atomics." + OpAttr[operation].atomic + "(" + mem + ", " + fieldIndex + ", " + rhs + ", " + rhs2 + ")";
                 else
                     expr = "FlatJS." + OpAttr[operation].synchronic + "(" + ref + ", " + mem + ", " + fieldIndex + ", " + rhs + ", " + rhs2 + ")";
                 break;
             default:
-                throw new InternalError("No operator: " + operation);
+                throw new InternalError("No operator: " + operation + " " + s);
         }
         // Issue #16: Parens interact with semicolon insertion.
         //expr = `(${expr})`;
@@ -1304,11 +1288,11 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
         // and should be rewritten as a call to the getter, passing the field reference.
         // Ditto setter, which will also pass secondArg.
         switch (operation) {
-            case "get_":
+            case "get":
                 if (t.hasGetMethod)
                     expr = t.name + "._get_impl(" + ref + ")";
                 break;
-            case "set_":
+            case "set":
                 if (t.hasSetMethod)
                     expr = t.name + "._set_impl(" + ref + ", " + expandMacrosIn(file, line, endstrip(rhs)) + ")";
                 break;
@@ -1337,21 +1321,11 @@ function arrMacro(file, line, s, p, ms) {
         return nomatch;
     var pp = new ParamParser(file, line, s, p + m.length);
     var as = (pp).allArgs();
-    // Issue #6: Emit warnings for arity abuse, at a minimum.  This is clearly very desirable.
-    // FIXME: atomics on fields of structs within array, syntax would be
-    // T.array_add_x(p,v), T.array_expectUpdate_y(p, v, t).
-    switch (operation) {
-        case "get":
-            if (as.length != 2)
-                return nomatch;
-            operation = "get_";
-            break;
-        case "set":
-            if (as.length != 3)
-                return nomatch;
-            operation = "set_";
-            break;
+    if (OpAttr[operation].arity + 1 != as.length) {
+        warning(file, line, "Wrong arity for accessor " + operation + " / " + as.length);
+        return nomatch;
     }
+    ;
     var multiplier = type.elementSize;
     if (type.kind == DefnKind.Primitive) {
         if (field)
@@ -1425,5 +1399,8 @@ function log2(x) {
         x >>= 1;
     }
     return i;
+}
+function warning(file, line, msg) {
+    console.log(file + ":" + line + ": Warning: " + msg);
 }
 main(process.argv.slice(2));
