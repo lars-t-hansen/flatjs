@@ -3,10 +3,6 @@
 * More test cases
 * Test on ray tracer
 * v1 targeted issues
-* Generate ES that runs in all major current browsers (consider that
-  splat may not be implemented everywhere, for example).  This
-  means some ES5+ dialect, likely.  Test at least the ray tracer
-  in all browsers.
 * This list could go into the wiki section of the repo.
 
 
