@@ -625,6 +625,92 @@ function parameterToArgument(file, line, s) {
         throw new ProgramError(file, line, "Unable to understand argument to virtual function: " + s);
     return m[1];
 }
+var ParamParser = (function () {
+    function ParamParser(file, line, input, pos) {
+        this.file = file;
+        this.line = line;
+        this.input = input;
+        this.pos = pos;
+        this.lim = 0;
+        this.done = false;
+        this.lim = input.length;
+    }
+    ParamParser.prototype.skipLeadingComma = function () {
+        if (this.done)
+            return;
+        while (this.pos < this.lim) {
+            switch (this.input.charAt(this.pos++)) {
+                case ',':
+                    return;
+                case ' ':
+                case '\t':
+                case '\n':
+                case '\r':
+                    break;
+                default:
+                    return;
+            }
+        }
+    };
+    // Returns null on failure to find a next argument
+    ParamParser.prototype.nextArg = function () {
+        if (this.done)
+            return null;
+        var depth = 0;
+        var start = this.pos;
+        // Issue #7: Really should handle /* .. */ comments
+        // Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
+        while (this.pos < this.lim) {
+            switch (this.input.charAt(this.pos++)) {
+                case ',':
+                    if (depth == 0)
+                        return this.cleanupArg(this.input.substring(start, this.pos - 1));
+                    break;
+                case '(':
+                case '{':
+                case '[':
+                    depth++;
+                    break;
+                case '}':
+                case ']':
+                    depth--;
+                    break;
+                case ')':
+                    if (depth == 0) {
+                        this.done = true;
+                        return this.cleanupArg(this.input.substring(start, this.pos - 1));
+                    }
+                    depth--;
+                    break;
+                case '\'':
+                case '"':
+                    // Issue #5: implement string support
+                    throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
+            }
+        }
+    };
+    ParamParser.prototype.allArgs = function () {
+        var as = [];
+        var a;
+        while (a = this.nextArg())
+            as.push(a);
+        return as;
+    };
+    Object.defineProperty(ParamParser.prototype, "where", {
+        get: function () {
+            return this.pos;
+        },
+        enumerable: true,
+        configurable: true
+    });
+    ParamParser.prototype.cleanupArg = function (s) {
+        s = s.replace(/^\s*|\s*$/g, "");
+        if (s == "")
+            return null;
+        return s;
+    };
+    return ParamParser;
+})();
 var knownTypes = new SMap();
 var knownIds = new SMap();
 var userTypes = [];
@@ -907,6 +993,7 @@ function findMethodImplFor(cls, stopAt, name) {
 // programmatic guards for that.
 var self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
 var self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
+var self_invoke_re = /SELF\.?[a-zA-Z0-9_]+\s*\(/g;
 // Name validity will be checked on the next expansion pass.
 function expandSelfAccessors() {
     for (var _i = 0; _i < userTypes.length; _i++) {
@@ -916,6 +1003,9 @@ function expandSelfAccessors() {
             var body = m.body;
             for (var k = 0; k < body.length; k++) {
                 body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
+                    return t.name + "." + m.substring(5) + "SELF, ";
+                });
+                body[k] = body[k].replace(self_invoke_re, function (m, p, s) {
                     return t.name + "." + m.substring(5) + "SELF, ";
                 });
                 body[k] = body[k].replace(self_getter_re, function (m, p, s) {
@@ -1057,92 +1147,6 @@ function myExec(file, line, re, macro, text) {
     }
     re.lastIndex = old;
     return text;
-}
-var ParamParser = (function () {
-    function ParamParser(file, line, input, pos) {
-        this.file = file;
-        this.line = line;
-        this.input = input;
-        this.pos = pos;
-        this.lim = 0;
-        this.done = false;
-        this.lim = input.length;
-    }
-    ParamParser.prototype.skipLeadingComma = function () {
-        if (this.done)
-            return;
-        while (this.pos < this.lim) {
-            switch (this.input.charAt(this.pos++)) {
-                case ',':
-                    return;
-                case ' ':
-                case '\t':
-                case '\n':
-                case '\r':
-                    break;
-                default:
-                    return;
-            }
-        }
-    };
-    // Returns null on failure to find a next argument
-    ParamParser.prototype.nextArg = function () {
-        if (this.done)
-            return null;
-        var depth = 0;
-        var start = this.pos;
-        // Issue #7: Really should handle /* .. */ comments
-        // Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
-        while (this.pos < this.lim) {
-            switch (this.input.charAt(this.pos++)) {
-                case ',':
-                    if (depth == 0)
-                        return cleanupArg(this.input.substring(start, this.pos - 1));
-                    break;
-                case '(':
-                case '{':
-                case '[':
-                    depth++;
-                    break;
-                case '}':
-                case ']':
-                    depth--;
-                    break;
-                case ')':
-                    if (depth == 0) {
-                        this.done = true;
-                        return cleanupArg(this.input.substring(start, this.pos - 1));
-                    }
-                    depth--;
-                    break;
-                case '\'':
-                case '"':
-                    // Issue #5: implement string support
-                    throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
-            }
-        }
-    };
-    ParamParser.prototype.allArgs = function () {
-        var as = [];
-        var a;
-        while (a = this.nextArg())
-            as.push(a);
-        return as;
-    };
-    Object.defineProperty(ParamParser.prototype, "where", {
-        get: function () {
-            return this.pos;
-        },
-        enumerable: true,
-        configurable: true
-    });
-    return ParamParser;
-})();
-function cleanupArg(s) {
-    s = s.replace(/^\s*|\s*$/g, "");
-    if (s == "")
-        return null;
-    return s;
 }
 // Here, arity includes the self argument
 var OpAttr = {
@@ -1304,12 +1308,7 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
         return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
 }
-// operation is get, set
-// typename is the base type, which could be any type at all
-// field may be blank, but if it is not then it is the field name within the
-//   type, eg, for a struct Foo with field x we may see Foo.array_get_x(SELF, n)
-// firstArg and secondArg are non-optional; thirdArg is used if the operation is set
-// FIXME: for fields within a structure, operation could be ref, too
+// Issue #20: for fields within a structure, operation could be ref, too.
 function arrMacro(file, line, s, p, ms) {
     var m = ms[0];
     var typeName = ms[1];

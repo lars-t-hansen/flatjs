@@ -578,6 +578,91 @@ function parameterToArgument(file, line, s:string):string {
     return m[1];
 }
 
+
+class ParamParser {
+    private lim = 0;
+    private done = false;
+
+    constructor(private file:string, private line:number, private input:string, private pos:number) {
+	this.lim = input.length;
+    }
+
+    skipLeadingComma():void {
+	if (this.done)
+	    return;
+	while (this.pos < this.lim) {
+	    switch (this.input.charAt(this.pos++)) {
+	    case ',':
+		return;
+	    case ' ':
+	    case '\t':
+	    case '\n':
+	    case '\r':
+		break;
+	    default:
+		return;
+	    }
+	}
+    }
+
+    // Returns null on failure to find a next argument
+    private nextArg():string {
+	if (this.done)
+	    return null;
+	let depth = 0;
+	let start = this.pos;
+	// Issue #7: Really should handle /* .. */ comments
+	// Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
+	while (this.pos < this.lim) {
+	    switch (this.input.charAt(this.pos++)) {
+	    case ',':
+		if (depth == 0)
+		    return this.cleanupArg(this.input.substring(start, this.pos-1));
+		break;
+	    case '(':
+	    case '{':
+	    case '[':
+		depth++;
+		break;
+	    case '}':
+	    case ']':
+		depth--;
+		break;
+	    case ')':
+		if (depth == 0) {
+		    this.done = true;
+		    return this.cleanupArg(this.input.substring(start, this.pos-1));
+		}
+		depth--;
+		break;
+	    case '\'':
+	    case '"':
+		// Issue #5: implement string support
+		throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
+	    }
+	}
+    }
+
+    allArgs():string[] {
+	let as:string[] = [];
+	let a:string;
+	while (a = this.nextArg())
+	    as.push(a);
+	return as;
+    }
+
+    get where(): number {
+	return this.pos;
+    }
+
+    cleanupArg(s:string):string {
+	s = s.replace(/^\s*|\s*$/g, "");
+	if (s == "")
+	    return null;
+	return s;
+    }
+}
+
 const knownTypes = new SMap<Defn>();
 const knownIds = new SMap<ClassDefn>();
 const userTypes:UserDefn[] = [];
@@ -874,6 +959,7 @@ function findMethodImplFor(cls:ClassDefn, stopAt:ClassDefn, name:string):string 
 
 const self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
 const self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
+const self_invoke_re = /SELF\.?[a-zA-Z0-9_]+\s*\(/g;
 
 // Name validity will be checked on the next expansion pass.
 
@@ -883,6 +969,9 @@ function expandSelfAccessors():void {
 	    let body = m.body;
 	    for ( let k=0 ; k < body.length ; k++ ) {
 		body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
+		    return t.name + "." + m.substring(5) + "SELF, ";
+		});
+		body[k] = body[k].replace(self_invoke_re, function (m, p, s) {
 		    return t.name + "." + m.substring(5) + "SELF, ";
 		});
 		body[k] = body[k].replace(self_getter_re, function (m, p, s) {
@@ -1029,90 +1118,6 @@ function myExec(file:string, line:number, re:RegExp, macro:(fn:string, l:number,
 
     re.lastIndex = old;
     return text;
-}
-
-class ParamParser {
-    private lim = 0;
-    private done = false;
-
-    constructor(private file:string, private line:number, private input:string, private pos:number) {
-	this.lim = input.length;
-    }
-
-    skipLeadingComma():void {
-	if (this.done)
-	    return;
-	while (this.pos < this.lim) {
-	    switch (this.input.charAt(this.pos++)) {
-	    case ',':
-		return;
-	    case ' ':
-	    case '\t':
-	    case '\n':
-	    case '\r':
-		break;
-	    default:
-		return;
-	    }
-	}
-    }
-
-    // Returns null on failure to find a next argument
-    private nextArg():string {
-	if (this.done)
-	    return null;
-	let depth = 0;
-	let start = this.pos;
-	// Issue #7: Really should handle /* .. */ comments
-	// Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
-	while (this.pos < this.lim) {
-	    switch (this.input.charAt(this.pos++)) {
-	    case ',':
-		if (depth == 0)
-		    return cleanupArg(this.input.substring(start, this.pos-1));
-		break;
-	    case '(':
-	    case '{':
-	    case '[':
-		depth++;
-		break;
-	    case '}':
-	    case ']':
-		depth--;
-		break;
-	    case ')':
-		if (depth == 0) {
-		    this.done = true;
-		    return cleanupArg(this.input.substring(start, this.pos-1));
-		}
-		depth--;
-		break;
-	    case '\'':
-	    case '"':
-		// Issue #5: implement string support
-		throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
-	    }
-	}
-    }
-
-    allArgs():string[] {
-	let as:string[] = [];
-	let a:string;
-	while (a = this.nextArg())
-	    as.push(a);
-	return as;
-    }
-
-    get where(): number {
-	return this.pos;
-    }
-}
-
-function cleanupArg(s:string):string {
-    s = s.replace(/^\s*|\s*$/g, "");
-    if (s == "")
-	return null;
-    return s;
 }
 
 // Here, arity includes the self argument
@@ -1289,13 +1294,7 @@ function loadFromRef(file:string, line:number,
     }
 }
 
-// operation is get, set
-// typename is the base type, which could be any type at all
-// field may be blank, but if it is not then it is the field name within the
-//   type, eg, for a struct Foo with field x we may see Foo.array_get_x(SELF, n)
-// firstArg and secondArg are non-optional; thirdArg is used if the operation is set
-
-// FIXME: for fields within a structure, operation could be ref, too
+// Issue #20: for fields within a structure, operation could be ref, too.
 
 function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];

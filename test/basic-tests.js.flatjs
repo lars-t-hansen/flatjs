@@ -19,6 +19,8 @@ assertEq(float64.SIZE, 8);
 
 // Basic classes
 
+var glob = 0;
+
 @flatjs class Point {
     x:int32
     y:int32
@@ -26,6 +28,11 @@ assertEq(float64.SIZE, 8);
     @method deep6(SELF) {
 	SELF.set_x(-SELF.x);
 	SELF.set_y(-SELF.y);
+	SELF.deep7(86);
+    }
+
+    @method deep7(SELF, k) {
+	glob = k;
     }
 } @end
 
@@ -43,6 +50,9 @@ assertEq(FlatJS.identify(p), Point);
 assertEq(Point.CLSID, _mem_int32[p>>2]); // White-box, layout
 
 assertEq(Point.ref_x(p) + int32.SIZE, Point.ref_y(p)); // Gray-box, layout
+
+Point.deep6(p);
+assertEq(glob, 86);
 
 // Sundry syntax corner cases
 
