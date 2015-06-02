@@ -105,18 +105,19 @@ Note the following:
 
 ### Static semantics
 
-Fields within a user-defined type must have names unique within that type.
-Every field name must be unique within the struct.
+Every field name in a struct must be unique within that struct.
 
-The struct type must not reference itself directly or indirectly via a
-chain of struct-typed fields.
+A field of struct type gives rise to a named substructure within the
+outer structure that contains the fields of the nested struct.  No struct
+may in this way include itself.
 
 
 ### Translation
 
 For a struct type named R, with field names F1 .. Fn, the following
-will be defined, where "self" denotes an address of memory that can
-hold an instance of R.
+will be defined, where "self" denotes a memory offset properly aligned
+for R and with a value such that memory offset self+R.size-1 is within
+the memory.
 
 
 #### Global value properties
@@ -156,34 +157,40 @@ If a field Fk is designated "synchronic" then the setter and atomics
 just shown are synchronic-aware (every update sends a notification).
 In addition, the following synchronic functions are defined:
 
-* R.expectUpdate_Fk(self, v, t) => void; wait until the value of the self.Fk field is observed not to hold v, or until t milliseconds have passed
-* R.loadWhenEqual_Fk(self, v) => wait until the value of the self.Fk field is observed to hold v, then return the value of that field (which might have changed since it was observed to hold v)
-* R.loadWhenNotEqual_Fk(self, v) => wait until the value of the self.Fk field is observed not to hold v, then return the value of that field (which might have changed back to v since it was observed)
-* R.notify_Fk(self) => wake all waiters on self.Fk, making them re-check their conditions.
+* R.expectUpdate_Fk(self, v, t) => void; wait until the value of the 
+  self.Fk field is observed not to hold v, or until t milliseconds have passed
+* R.loadWhenEqual_Fk(self, v) => wait until the value of the self.Fk
+  field is observed to hold v, then return the value of that field
+  (which might have changed since it was observed to hold v)
+* R.loadWhenNotEqual_Fk(self, v) => wait until the value of the self.Fk
+  field is observed not to hold v, then return the value of that field
+  (which might have changed back to v since it was observed)
+* R.notify_Fk(self) => wake all waiters on self.Fk, making them re-check
+  their conditions.
 
 If a field Fk has a struct type T with fields G1 .. Gm then the
 following functions are defined:
 
-* R.Fk(self) => if T does not have a @get method then this is undefined. Otherwise, a function that invokes the @get method on a reference to self.Fk.
-* R.set_Fk(self, ...args) => if T does not have a @set method then this is undefined.  Otherwise, a function that invokes the @set method on a reference to self.Fk and ...args
+* R.Fk(self) => if T does not have a @get method then this is undefined.
+  Otherwise, a function that invokes the @get method on a reference to self.Fk.
+* R.set_Fk(self, ...args) => if T does not have a @set method then this
+  is undefined.  Otherwise, a function that invokes the @set method on a
+  reference to self.Fk and ...args
 * R.ref_Fk(self) => A reference to self.FK.
+* Getters, setters, and accessors for fields G1 through Gm within Fk,
+  with the general pattern R.Fk_Gi(self) and R.op_Fk_Gi(self,...), by
+  the rules above.
 
-Getters, setters, and accessors for fields G1 through Gm within Fk,
-with the general pattern R.Fk_Gi(self) and R.Fk_op_Gi(self,...), by
-the rules above.
 
+## Class types
 
-## Class types.
-
-A class describes a reference type with mutable fields.
-
-It takes the form of a number of fields followed by a number of
-methods.  As for structs, if a field type is a struct type then the
-fields of that struct will appear as subfields of the class being
-defined.  If a field type is a class type then the value of the field
-is a class instance address.
+A class describes a reference type (instances have object identity)
+with mutable fields.
 
 ### Syntax
+
+A class definition takes the form of a number of fields followed
+by a number of methods:
 
 ```
   Class-def ::= (lookbehind EOL)
@@ -197,56 +204,94 @@ is a class instance address.
 
 ### Static semantics
 
-No cycles in the inheritance graph.
+If a class definition contains an extends clause then the Id in
+the extends clause must name a class (the "base class").
+No class may extend itself directly or indirectly.
 
-Uniqueness as for structs (classes and structs share the same
-namespace).
-  
-Base types may be forward declared.
+No field within a class definition must have a name that
+matches any other field or method within the class definition
+or within the definition of any base class.
+
+No method within a class definition must have a name that
+matches any method within the class definition (but it may match a
+method in a base class).
+
+A method whose name matches the name of a method in a base class
+is said to override the base class method.  Overriding methods
+must have the same signature (number and types of arguments) as
+the overridden method.
+
+The special method called ```init``` is not an overriding method,
+and is not subject to restrictions on signature matching.  (This
+is a hack, it will change.)
+
+The first argument to a method is always the keyword SELF.
+
+As for structs, a field of struct type gives rise to a named substructure
+within the outer class that contains the fields of the nested struct.
+
+A field of class type gives rise to a pointer field.
+
+The layout of a class is compatible with the layout of its base class:
+any accessor on a field of a base class, and any invoker of
+a method defined on the base class (except ```init```) can be
+used on an instance of the derived class.
 
 
 ### Dynamic semantics
 
 Before memory for a class instance can be used as a class instance,
-the class's initInstance method must be invoked on the memory.
-
-Methods are currently always virtual except for the method called
-'init', which is not.
-
+the class's initInstance method must be invoked on the memory. 
+If used, the ```@new``` operator (see below) invokes initInstance
+on behalf of the program.
 
 ### Translation
 
-The first field of an object is a hidden int32 field that holds a
-globally invariant type identifier, see below.
+For a class type named C, with field names F1 .. Fn and method names M1 .. Mn
+(including inherited fields and methods), the following
+will be defined, where "self" denotes a memory offset properly aligned
+for C and with a value such that memory offset self+C.size-1 is within
+the memory.
 
-The fields of a supertype are prepended to the fields of the
-subtype, for purposes of layout.
-  
-* R.SIZE as for structs.
-* R.ALIGN as for structs.
-* R.NAME as for structs.
-* R.CLSID for the type ID for the type.
-* R.BASE for the base type of R, or null.
 
-Field getters/setters are translated as for structs.
-  
-A method "meth" for object type O with subtypes J and K where J
-overrides meth but K does not (and in this case J could be a subtype
-of K, or not), turns into this global function:
+#### Global value properties
 
-```
-    function O_meth(self, arg, ...) {
-        switch (_mem_i32[self>>2]) {
-        case J_ID: return J_meth_impl(self, arg, ...); 
-        default:   return O_meth_impl(self, arg, ...);
-        }
-    }
-```
+C is a global "const" holding an object designating the type.
 
-where the arguments keep their annotations, the annotations on
-O_meth are those of the method defined on O, the others may differ.
+C.SIZE is the size in bytes of C.  Note that since C is a reference
+type, to allocate an "array of C" means to allocate an array of
+pointers, which are int32 values.
 
-NOTE: _impl method and how to invoke on super
+C.ALIGN is the required alignment for C, in bytes.
+
+C.NAME is the name of the type C.
+
+C.CLSID for the type ID for the type.
+
+C.BASE for the base type of R, or null.
+
+#### Global function properties
+
+Getters and setters for fields are translated exactly for structs.
+If class D derives from class B and class B has a field x, then 
+there will be accessors for x defined on D as well.
+
+If a method Mk is defined on class C or inherited from class B, then
+an invoker is defined for Mk on C:
+
+* C.Mk(self, ...)
+
+The invoker will determine the actual type of self and invoke the correct
+method implementation.  self must reference an instance of type C or a
+subclass of C.  The type is determined by consulting a hidden field within
+the instance that contains the class ID of the object.
+
+If a method Mk is defined on class C, then an implementation is defined
+for Mk on C:
+
+* C.Mk_impl(self, ...)
+
+The implementation is the actual method body defined within the class.
 
 
 ## Array types
