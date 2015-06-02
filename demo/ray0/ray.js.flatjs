@@ -60,18 +60,10 @@ function dot(a, b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 	return DL3(SELF.x, SELF.y, SELF.z);
     }
 
-    @set(SELF, ...args) {
-	if (args.length == 1) {
-	    var v = args[0];
-	    SELF.set_x(v.x);
-	    SELF.set_y(v.y);
-	    SELF.set_z(v.z);
-	}
-	else {
-	    SELF.set_x(args[0]);
-	    SELF.set_y(args[1]);
-	    SELF.set_z(args[2]);
-	}
+    @set(SELF, v) {
+	SELF.set_x(v.x);
+	SELF.set_y(v.y);
+	SELF.set_z(v.z);
     }
 } @end
 

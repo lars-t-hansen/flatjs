@@ -9,7 +9,8 @@
  *
  * Call FlatJS.init before using, see documentation below.
  *
- * NOTE: The following needs to be valid ES5 code.
+ * NOTE: The following needs to be valid "ES5+" code - close enough
+ * to ES5 to run in all major browsers.
  */
 
 /*
@@ -18,14 +19,14 @@
  * shared.
  */
 if (typeof "Atomics" == "undefined") {
-    Atomics = { load: function (...args) { throw "No Atomics"; },
-		store: function (...args) { throw "No Atomics"; },
-		add: function (...args) { throw "No Atomics"; },
-		sub: function (...args) { throw "No Atomics"; },
-		and:  function (...args) { throw "No Atomics"; },
-		or:  function (...args) { throw "No Atomics"; },
-		xor:  function (...args) { throw "No Atomics"; },
-		compareExchange:  function (...args) { throw "No Atomics"; }
+    Atomics = { load: function () { throw "No Atomics"; },
+		store: function () { throw "No Atomics"; },
+		add: function () { throw "No Atomics"; },
+		sub: function () { throw "No Atomics"; },
+		and:  function () { throw "No Atomics"; },
+		or:  function () { throw "No Atomics"; },
+		xor:  function () { throw "No Atomics"; },
+		compareExchange:  function () { throw "No Atomics"; }
 	      };
 }
 
