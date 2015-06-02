@@ -44,6 +44,16 @@ assertEq(Point.CLSID, _mem_int32[p>>2]); // White-box, layout
 
 assertEq(Point.ref_x(p) + int32.SIZE, Point.ref_y(p)); // Gray-box, layout
 
+// Sundry syntax corner cases
+
+@flatjs class EmptyClass {
+} @end
+
+@flatjs class MethodOnlyClass {
+    @method oneLiner(SELF) { return 1; }
+    @method anotherOneLiner(SELF) { return 2; }
+} @end
+
 // Basic inheritance
 
 @flatjs class Point3D extends Point {

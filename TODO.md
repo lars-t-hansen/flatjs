@@ -8,8 +8,6 @@
   means some ES5+ dialect, likely.  Test at least the ray tracer
   in all browsers.
 * This list could go into the wiki section of the repo.
-* Check that one-liners a la this work correctly:
-    @method intersect(SELF, eye, ray, min, max) { throw "Pure: Surface.intersect" }
 
 
 ## Language ideas to investigate
