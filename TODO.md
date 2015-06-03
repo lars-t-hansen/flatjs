@@ -1,7 +1,6 @@
 ## Immediate things to do:
 
 * More test cases
-* v1 targeted issues
 * This list could go into the wiki section of the repo.
 
 
@@ -37,6 +36,18 @@
   general.
   http://wiki.ecmascript.org/doku.php?id=harmony:typed_objects
 
+* Consider generalizing syntax etc in the following way.  Instead of
+  writing T.x_y_z(p) for a subreference, write T.x.y.z(p).  Expand it in
+  the same way (and now _ is allowed, maybe, though it's needed for
+  all other operations).  Consider also that with dot notation it
+  becomes natural for the operation to come last, eg,
+     SELF.spaceAvailable.expectUpdate(probe, remaining)
+  not, as now,
+     SELF.expectUpdate_spaceAvailable(probe, remaining);
+  Note also that with type aliases (see below), it is effectively
+  necessary for the operation to come last, after a final ".".
+
+
 ### Likely medium value
 
 * The @flatjs syntax conflicts with, or at least can be confused with,
@@ -68,10 +79,6 @@
   nothing in Firefox.  Right now, float32x4.array is just a float32
   array, which will be a compatibility issue(?) if the new view
   type is ever added.
-* Consider generalizing syntax etc in the following way.  Instead of
-  writing T.x_y_z(p) for a subreference, write T.x.y.z(p).  Expand it in
-  the same way (and now _ is allowed, maybe, though it's needed for
-  all other operations).
 * The one-argument @set and the no-argument @get are most easily
   generated from the field-wise getters and setters, so maybe
   the syntax is @get generate and @set generate, to make them happen
@@ -104,7 +111,7 @@
   "@flatjs const x = 10").
 * Sliding further, constant expressions.
 * Sliding further still, type aliases: @flatjs type X = int32.atomic.Array,
-  then X.set() and X.get().
+  then X.set() and X.get().  For that, we really want . syntax and not _ syntax.
 * String types, maybe?  Easy enough to define a SharedString class
   that references an underlying array, probably.  Doing so would get
   into interesting territory about sharing and refcounting and

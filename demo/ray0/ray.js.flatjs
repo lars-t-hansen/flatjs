@@ -134,7 +134,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
 	var objs = SELF.objects;
 	for ( var idx=0, limit=SELF.length ; idx < limit ; idx++ ) {
-	    var surf = Surface.array_get(objs,idx);
+	    var surf = Surface.array_get(objs, idx);
 	    var tmp = Surface.intersect(surf, eye, ray, min, max);
 	    var obj = tmp.obj;
 	    var dist = tmp.dist;
