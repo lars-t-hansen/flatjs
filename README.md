@@ -8,3 +8,5 @@ FlatJS is implemented as a preprocessor that translates JavaScript+FlatJS into p
 
 See SPEC.md for more information about the language, and test/ and demo/ for test programs.
 
+See the wiki for notes on missing features and future evolution.
+
