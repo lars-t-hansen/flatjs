@@ -649,7 +649,6 @@ var ParamParser = (function () {
         var sawRightParen = false;
         var sawComma = false;
         var fellOff = false;
-        // Issue #7: Really should handle /* .. */ comments
         // Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
         loop: for (;;) {
             if (this.pos == this.lim) {
@@ -662,6 +661,15 @@ var ParamParser = (function () {
                     if (this.pos < this.lim && this.input.charAt(this.pos) == '/') {
                         this.done = true;
                         break loop;
+                    }
+                    if (this.pos < this.lim && this.input.charAt(this.pos) == '*') {
+                        this.pos++;
+                        for (;;) {
+                            if (this.pos == this.lim)
+                                throw new ProgramError(this.file, this.line, "Line ended unexpectedly - still nested within comment.");
+                            if (this.input.charAt(this.pos++) == '*' && this.pos < this.lim && this.input.charAt(this.pos) == '/')
+                                break;
+                        }
                     }
                     break;
                 case ';':
@@ -1031,6 +1039,7 @@ function expandSelfAccessors() {
                     return t.name + "." + m.substring(5) + "SELF, ";
                 });
                 body[k] = body[k].replace(self_invoke_re, function (m, p, s) {
+                    // Issue #23: the comma is not always correct.
                     return t.name + "." + m.substring(5) + "SELF, ";
                 });
                 body[k] = body[k].replace(self_getter_re, function (m, p, s) {

@@ -165,8 +165,8 @@ for ( var i=0 ; i < 7 ; i++ )
 
 var pa = @new array(Pair, 4);
 for ( var i=0 ; i < 4 ; i++ ) {
-    Pair.array_set_x(pa, i, i);
-    Pair.array_set_y(pa, i, -i);
+    Pair.array_set_x(pa, i, /* value */ i);
+    Pair.array_set_y(pa, i, /* value */ -i);
 }
 
 for ( var i=0 ; i < 4 ; i++ ) {

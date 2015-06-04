@@ -602,7 +602,6 @@ class ParamParser {
 	let sawRightParen = false;
 	let sawComma = false;
 	let fellOff = false;
-	// Issue #7: Really should handle /* .. */ comments
 	// Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
       loop:
 	for (;;) {
@@ -616,6 +615,15 @@ class ParamParser {
 		if (this.pos < this.lim && this.input.charAt(this.pos) == '/') {
 		    this.done = true;
 		    break loop;
+		}
+		if (this.pos < this.lim && this.input.charAt(this.pos) == '*') {
+		    this.pos++;
+		    for (;;) {
+			if (this.pos == this.lim)
+			    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - still nested within comment.");
+			if (this.input.charAt(this.pos++) == '*' && this.pos < this.lim && this.input.charAt(this.pos) == '/')
+			    break;
+		    }
 		}
 		break;
 	    case ';':
