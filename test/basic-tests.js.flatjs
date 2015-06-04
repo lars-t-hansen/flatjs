@@ -30,7 +30,7 @@ var glob = 0;
 	SELF.y += 5;		// Shorthand syntax
     }
 
-    @method deep6(SELF) {
+    @virtual deep6(SELF) {
 	SELF.set_x(-SELF.x);
 	SELF.set_y(-SELF.y);
 	SELF.deep7(86);
@@ -81,7 +81,7 @@ assertEq(glob, 86);
 	return SELF;
     }
 
-    @method deep6(SELF) {	// Override
+    @virtual deep6(SELF) {	// Override
 	SELF.z = -SELF.z;	// Alternate syntax
     }
 } @end

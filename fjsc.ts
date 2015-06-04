@@ -168,6 +168,13 @@ class ClassDefn extends UserDefn {
 		return true;
 	return false;
     }
+
+    getMethod(name:string):Method {
+	for ( let m of this.methods )
+	    if (m.name == name)
+		return m;
+	return null;
+    }
 }
 
 class Virtual {
@@ -200,9 +207,7 @@ class VirtualMethodIterator {
 		continue;
 	    }
 	    let m = this.cls.methods[this.i++];
-	    if (m.kind != MethodKind.Virtual) // In the future, we may have non-virtuals
-		continue;
-	    if (m.name == "init") // Not virtual
+	    if (m.kind != MethodKind.Virtual)
 		continue;
 	    if (this.filter.test(m.name))
 		continue;
@@ -277,6 +282,7 @@ class Prop {
 
 enum MethodKind {
     Virtual,
+    NonVirtual,
     Get,
     Set
 }
@@ -422,6 +428,7 @@ function main(args: string[]):void {
 	buildTypeMap();
 	resolveTypeRefs();
 	checkRecursion();
+	checkMethods();
 	layoutTypes();
 	createVirtuals();
 	expandSelfAccessors();
@@ -432,10 +439,8 @@ function main(args: string[]):void {
 	    fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
     }
     catch (e) {
-	if (e instanceof CapturedError)
-	    console.log(e.message);
-	else
-	    throw e;
+	console.log(e.message);
+	//console.log(e);
     }
 }
 
@@ -451,7 +456,7 @@ const end_re = new RegExp("^" + Rbrace + Os + "@end" + Comment + "$");
 const struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + Comment + "$");
 const class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + Comment + "$");
 const special_re = new RegExp("^" + Os + "@(get|set|copy)" + Os + "(\\(" + Os + "SELF.*)$");
-const method_re = new RegExp("^" + Os + "@method" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "SELF.*)$");
+const method_re = new RegExp("^" + Os + "@(method|virtual)" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "SELF.*)$");
 const blank_re = new RegExp("^" + Os + Comment + "$");
 const space_re = new RegExp("^" + Os + "$");
 const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(?:(atomic|synchronic)" + Ws + ")?(" + Id + ")" + Os + ";?" + Comment + "$");
@@ -506,11 +511,11 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		if (in_method)
 		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
 		in_method = true;
-		method_type = MethodKind.Virtual;
-		method_name = m[1];
+		method_type = (m[1] == "method" ? MethodKind.NonVirtual : MethodKind.Virtual);
+		method_name = m[2];
 		// Parse the signature.  Just use the param parser for now,
 		// but note that what we get back will need postprocessing.
-		let pp = new ParamParser(filename, i, m[2], /* skip left paren */ 1);
+		let pp = new ParamParser(filename, i, m[3], /* skip left paren */ 1);
 		let args = pp.allArgs();
 		args.shift();	               // Discard SELF
 		// Issue #15: In principle there are two signatures here: there is the
@@ -518,7 +523,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		// virtual, and there is the set of arguments extracted from that,
 		// including any splat.
 		method_signature = args.map(function (x) { return parameterToArgument(filename, i, x) });
-		mbody = [m[2]];
+		mbody = [m[3]];
 	    }
 	    else if (m = special_re.exec(l)) {
 		if (kind != "struct")
@@ -836,6 +841,34 @@ function checkRecursion():void {
     }
 }
 
+// Ugh, this is wrong for init(), where we want each class to have its
+// own.  Really there's no reason to outlaw same-named methods in base
+// or subclass, except it's confusing to allow it.
+
+function checkMethods():void {
+    for ( let d of userTypes ) {
+	if (d.kind != DefnKind.Class)
+	    continue;
+	let cls = <ClassDefn> d;
+	for ( let m of d.methods ) {
+	    for ( let b=cls.baseTypeRef ; b ; b=b.baseTypeRef ) {
+		let bm = b.getMethod(m.name);
+		if (!bm)
+		    continue;
+		if (m.kind == MethodKind.NonVirtual && bm.kind == MethodKind.Virtual)
+		    throw new ProgramError(cls.file, m.line,
+					   "Non-virtual method " + m.name + " is defined virtual in a base class " + b.name + " (" + b.file + ":" + b.line + ")");
+		if (m.kind == MethodKind.Virtual && bm.kind != MethodKind.Virtual)
+		    throw new ProgramError(cls.file, m.line,
+					   "Virtual method " + m.name + " is defined non-virtual in a base class " + b.name + " (" + b.file + ":" + b.line + ")");
+		if (m.kind == MethodKind.Virtual) {
+		    // TODO: check arity of methods, requires parsing parameter lists etc.
+		}
+	    }
+	}
+    }
+}
+
 function layoutTypes():void {
     for ( let d of userTypes ) {
 	if (d.kind == DefnKind.Class)
@@ -1107,7 +1140,7 @@ function pasteupTypes():void {
 		    case MethodKind.Set: name = "_set_impl"; break;
 		    }
 		}
-		else if (name == "init")
+		else if (m.kind == MethodKind.NonVirtual)
 		    ;
 		else
 		    name += "_impl";

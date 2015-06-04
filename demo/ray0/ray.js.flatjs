@@ -105,11 +105,11 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	return SELF;
     }
 
-    @method intersect(SELF, eye, ray, min, max) {
+    @virtual intersect(SELF, eye, ray, min, max) {
 	throw "Pure: Surface.intersect"
     }
 
-    @method normal(SELF, p) {
+    @virtual normal(SELF, p) {
 	throw "Pure: Surface.normal"
     }
 } @end
@@ -128,7 +128,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	return SELF;
     }
 
-    @method intersect(SELF, eye, ray, min, max) {
+    @virtual intersect(SELF, eye, ray, min, max) {
 	var min_obj = NULL;
 	var min_dist = SENTINEL;
 
@@ -161,7 +161,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	return SELF;
     }
 
-    @method intersect(SELF, eye, ray, min, max) {
+    @virtual intersect(SELF, eye, ray, min, max) {
 	var DdotD = dot(ray, ray);
 	var EminusC = subvref(eye, SELF.ref_center);
 	var B = dot(ray, EminusC);
@@ -181,7 +181,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	return {obj:SELF, dist:_dist};
     }
 
-    @method normal(SELF, p) {
+    @virtual normal(SELF, p) {
 	return divi(subvref(p, SELF.ref_center), SELF.radius);
     }
 } @end
@@ -199,7 +199,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	return SELF;
     }
 
-    @method intersect(SELF, eye, ray, min, max) {
+    @virtual intersect(SELF, eye, ray, min, max) {
 	// TODO: observe that values that do not depend on g, h, and i can be precomputed
 	// and stored with the triangle (for a given eye position), at some (possibly significant)
 	// space cost.  Notably the numerator of "t" is invariant, as are many factors of the
@@ -229,7 +229,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	return {obj:SELF, dist:t};
     }
 
-    @method normal(SELF, p) {
+    @virtual normal(SELF, p) {
 	// TODO: Observe that the normal is invariant and can be stored with the triangle
 	return normalize(cross(subrefref(SELF.ref_v2, SELF.ref_v1), subrefref(SELF.ref_v3, SELF.ref_v1)));
     }

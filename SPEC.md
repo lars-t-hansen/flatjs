@@ -219,7 +219,7 @@ by a number of methods:
                 ((Comment | Class-Method) EOL)*
                 "}" "@end" Comment? EOL
 
-  Class-method ::= "@method" Id "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
+  Class-method ::= ("@method"|"@virtual") Id "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
 ```
 
 ### Static semantics
@@ -232,18 +232,19 @@ No field within a class definition must have a name that
 matches any other field or method within the class definition
 or within the definition of any base class.
 
-No method within a class definition must have a name that
-matches any method within the class definition (but it may match a
-method in a base class).
+No method within a class definition must have a name that matches any
+method within the class definition.  However, a method in a class may
+match the name of a method in the base class if they are either both
+designated virtual or if neither is designated virtual.
 
-A method whose name matches the name of a method in a base class
-is said to override the base class method.  Overriding methods
-must have the same signature (number and types of arguments) as
-the overridden method.
+(The case for neither being designated virtual is to accomodate the
+```init``` method.  I suspect that a special-case rule for ```init```
+may be better, but I'm not sure yet.)
 
-The special method called ```init``` is not an overriding method,
-and is not subject to restrictions on signature matching.  (This
-is a hack, it will change.)
+A virtual method whose name matches the name of a method in a base
+class is said to override the base class method.  Overriding methods
+must have the same signature (number and types of arguments) as the
+overridden method.
 
 The first argument to a method is always the keyword SELF.
 
@@ -253,9 +254,9 @@ within the outer class that contains the fields of the nested struct.
 A field of class type gives rise to a pointer field.
 
 The layout of a class is compatible with the layout of its base class:
-any accessor on a field of a base class, and any invoker of
-a method defined on the base class (except ```init```) can be
-used on an instance of the derived class.
+any accessor on a field of a base class, and any invoker of a method
+defined on the base class can be used on an instance of the derived
+class.
 
 
 ### Dynamic semantics
@@ -296,18 +297,21 @@ Getters and setters for fields are translated exactly for structs.
 If class D derives from class B and class B has a field x, then 
 there will be accessors for x defined on D as well.
 
-If a method Mk is defined on class C or inherited from class B, then
-an invoker is defined for Mk on C:
+If a method Mk is defined on class C or is a virtual method inherited
+from class B, then an invoker is defined for Mk on C:
 
 * C.Mk(self, ...)
 
-The invoker will determine the actual type of self and invoke the correct
-method implementation.  self must reference an instance of type C or a
-subclass of C.  The type is determined by consulting a hidden field within
-the instance that contains the class ID of the object.
+The invoker for a virtual method will determine the actual type of
+self and invoke the correct method implementation; the invoker for a
+direct method will just contain the method implementation.
 
-If a method Mk is defined on class C, then an implementation is defined
-for Mk on C:
+self must reference an instance of type C or a subclass of C.  The
+type is determined by consulting a hidden field within the instance
+that contains the class ID of the object.
+
+If a virtual method Mk is defined on class C, then an implementation
+is defined for Mk on C:
 
 * C.Mk_impl(self, ...)
 

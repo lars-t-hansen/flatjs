@@ -197,6 +197,14 @@ var ClassDefn = (function (_super) {
         }
         return false;
     };
+    ClassDefn.prototype.getMethod = function (name) {
+        for (var _i = 0, _a = this.methods; _i < _a.length; _i++) {
+            var m = _a[_i];
+            if (m.name == name)
+                return m;
+        }
+        return null;
+    };
     return ClassDefn;
 })(UserDefn);
 var Virtual = (function () {
@@ -234,8 +242,6 @@ var VirtualMethodIterator = (function () {
             }
             var m = this.cls.methods[this.i++];
             if (m.kind != MethodKind.Virtual)
-                continue;
-            if (m.name == "init")
                 continue;
             if (this.filter.test(m.name))
                 continue;
@@ -315,8 +321,9 @@ var Prop = (function () {
 var MethodKind;
 (function (MethodKind) {
     MethodKind[MethodKind["Virtual"] = 0] = "Virtual";
-    MethodKind[MethodKind["Get"] = 1] = "Get";
-    MethodKind[MethodKind["Set"] = 2] = "Set";
+    MethodKind[MethodKind["NonVirtual"] = 1] = "NonVirtual";
+    MethodKind[MethodKind["Get"] = 2] = "Get";
+    MethodKind[MethodKind["Set"] = 3] = "Set";
 })(MethodKind || (MethodKind = {}));
 var Method = (function () {
     function Method(line, kind, name, signature, body) {
@@ -468,6 +475,7 @@ function main(args) {
         buildTypeMap();
         resolveTypeRefs();
         checkRecursion();
+        checkMethods();
         layoutTypes();
         createVirtuals();
         expandSelfAccessors();
@@ -479,10 +487,7 @@ function main(args) {
         }
     }
     catch (e) {
-        if (e instanceof CapturedError)
-            console.log(e.message);
-        else
-            throw e;
+        console.log(e.message);
     }
 }
 var Ws = "\\s+";
@@ -496,7 +501,7 @@ var end_re = new RegExp("^" + Rbrace + Os + "@end" + Comment + "$");
 var struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + Comment + "$");
 var class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + Comment + "$");
 var special_re = new RegExp("^" + Os + "@(get|set|copy)" + Os + "(\\(" + Os + "SELF.*)$");
-var method_re = new RegExp("^" + Os + "@method" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "SELF.*)$");
+var method_re = new RegExp("^" + Os + "@(method|virtual)" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "SELF.*)$");
 var blank_re = new RegExp("^" + Os + Comment + "$");
 var space_re = new RegExp("^" + Os + "$");
 var prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(?:(atomic|synchronic)" + Ws + ")?(" + Id + ")" + Os + ";?" + Comment + "$");
@@ -546,11 +551,11 @@ function collectDefinitions(filename, lines) {
                 if (in_method)
                     methods.push(new Method(i, method_type, method_name, method_signature, mbody));
                 in_method = true;
-                method_type = MethodKind.Virtual;
-                method_name = m[1];
+                method_type = (m[1] == "method" ? MethodKind.NonVirtual : MethodKind.Virtual);
+                method_name = m[2];
                 // Parse the signature.  Just use the param parser for now,
                 // but note that what we get back will need postprocessing.
-                var pp = new ParamParser(filename, i, m[2], 1);
+                var pp = new ParamParser(filename, i, m[3], 1);
                 var args = pp.allArgs();
                 args.shift(); // Discard SELF
                 // Issue #15: In principle there are two signatures here: there is the
@@ -558,7 +563,7 @@ function collectDefinitions(filename, lines) {
                 // virtual, and there is the set of arguments extracted from that,
                 // including any splat.
                 method_signature = args.map(function (x) { return parameterToArgument(filename, i, x); });
-                mbody = [m[2]];
+                mbody = [m[3]];
             }
             else if (m = special_re.exec(l)) {
                 if (kind != "struct")
@@ -873,6 +878,31 @@ function checkRecursion() {
         d.checked = true;
     }
 }
+// Ugh, this is wrong for init(), where we want each class to have its
+// own.  Really there's no reason to outlaw same-named methods in base
+// or subclass, except it's confusing to allow it.
+function checkMethods() {
+    for (var _i = 0; _i < userTypes.length; _i++) {
+        var d = userTypes[_i];
+        if (d.kind != DefnKind.Class)
+            continue;
+        var cls = d;
+        for (var _a = 0, _b = d.methods; _a < _b.length; _a++) {
+            var m = _b[_a];
+            for (var b = cls.baseTypeRef; b; b = b.baseTypeRef) {
+                var bm = b.getMethod(m.name);
+                if (!bm)
+                    continue;
+                if (m.kind == MethodKind.NonVirtual && bm.kind == MethodKind.Virtual)
+                    throw new ProgramError(cls.file, m.line, "Non-virtual method " + m.name + " is defined virtual in a base class " + b.name + " (" + b.file + ":" + b.line + ")");
+                if (m.kind == MethodKind.Virtual && bm.kind != MethodKind.Virtual)
+                    throw new ProgramError(cls.file, m.line, "Virtual method " + m.name + " is defined non-virtual in a base class " + b.name + " (" + b.file + ":" + b.line + ")");
+                if (m.kind == MethodKind.Virtual) {
+                }
+            }
+        }
+    }
+}
 function layoutTypes() {
     for (var _i = 0; _i < userTypes.length; _i++) {
         var d = userTypes[_i];
@@ -1134,7 +1164,7 @@ function pasteupTypes() {
                             break;
                     }
                 }
-                else if (name_2 == "init")
+                else if (m.kind == MethodKind.NonVirtual)
                     ;
                 else
                     name_2 += "_impl";
