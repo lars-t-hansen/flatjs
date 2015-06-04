@@ -1004,6 +1004,7 @@ function expandSelfAccessors():void {
 		    return t.name + "." + m.substring(5) + "SELF, ";
 		});
 		body[k] = body[k].replace(self_invoke_re, function (m, p, s) {
+		    // Issue #23: the comma is not always correct.
 		    return t.name + "." + m.substring(5) + "SELF, ";
 		});
 		body[k] = body[k].replace(self_getter_re, function (m, p, s) {
