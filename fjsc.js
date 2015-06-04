@@ -457,9 +457,8 @@ function main(args) {
     try {
         for (var _i = 0; _i < args.length; _i++) {
             var input_file = args[_i];
-            if (input_file.length < 10 ||
-                (input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
-                throw new UsageError("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
+            if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
+                throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
             var text = fs.readFileSync(input_file, "utf8");
             var lines = text.split("\n");
             var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];

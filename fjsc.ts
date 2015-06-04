@@ -410,9 +410,8 @@ const allSources:Source[] = [];
 function main(args: string[]):void {
     try {
 	for ( let input_file of args ) {
-	    if (input_file.length < 10 ||
-		(input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
-		throw new UsageError("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
+	    if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
+		throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
 	    let text = fs.readFileSync(input_file, "utf8");
 	    let lines = text.split("\n");
 	    let [defs, residual] = collectDefinitions(input_file, lines);
