@@ -1253,16 +1253,16 @@ function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
 
     let fld = cls.findAccessibleFieldFor(operation, propName);
     if (!fld) {
-	//console.log("No match for " + className + "  " + operation + "  " + propName);
+	let fld2 = cls.findAccessibleFieldFor("get", propName);
+	if (fld2)
+	    warning(file, line, "No match for " + className + "  " + operation + "  " + propName);
 	return nomatch;
     }
-
-    // Issue #6: Emit warnings for arity abuse, at a minimum.
 
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
     if (OpAttr[operation].arity != as.length) {
-	console.log(`Bad accessor arity ${propName} / ${as.length}`);
+	warning(file, line, `Bad accessor arity ${propName} / ${as.length}`);
 	return nomatch;
     };
 
@@ -1380,8 +1380,10 @@ function loadFromRef(file:string, line:number,
 		expr = `${t.name}._set_impl(${ref}, ${expandMacrosIn(file, line, endstrip(rhs))})`;
 	    break;
 	}
-	if (expr == "")
-	    return nomatch;	// Issue #6: Warning desired
+	if (expr == "") {
+	    warning(file, line, "No operation " + operation + " allowed");
+	    return nomatch;
+	}
 	// Issue #16: Parens interact with semicolon insertion.
 	//expr = `(${expr})`;
 	return [left + expr + s.substring(pp.where), left.length + expr.length];
