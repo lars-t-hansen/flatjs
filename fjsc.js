@@ -703,9 +703,24 @@ var ParamParser = (function () {
                     depth--;
                     break;
                 case '\'':
-                case '"':
-                    // Issue #5: implement string support
-                    throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
+                case '"': {
+                    var c = this.input.charAt(this.pos - 1);
+                    for (;;) {
+                        if (this.pos == this.lim)
+                            throw new ProgramError(this.file, this.line, "Line ended unexpectedly - within a string.");
+                        var d = this.input.charAt(this.pos++);
+                        if (d == c)
+                            break;
+                        if (d == '\\') {
+                            if (this.pos < this.lim)
+                                this.pos++;
+                        }
+                    }
+                    break;
+                }
+                case '`':
+                    // FIXME
+                    throw new ProgramError(this.file, this.line, "Avoid template strings in arguments for now");
             }
         }
         var result = this.cleanupArg(this.input.substring(start, fellOff ? this.pos : this.pos - 1));
