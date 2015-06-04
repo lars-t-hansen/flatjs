@@ -10,45 +10,51 @@
  *
  * This version is built on flatjs.  The original version, in
  * parlib-simple, used hand-built shared-memory data structures.
+ *
+ * Here an IntQueue has two parts: a local front object in each
+ * worker, and a shared representation in shared memory.  The front
+ * objects have methods that forward to the methods on shared memory.
+ *
+ * An IntQueue front object and its shared representation are
+ * allocated in a worker using "new".  Then a reference to the shared
+ * representation is extracted via the "reference" property, and sent
+ * to another worker.  On the other worker, a local front object is
+ * created for the shared data using IntQueue.fromReference.
+ *
+ * It is not necessary to have front objects, but it keeps things
+ * cleaner, and when the allocation rate of front objects is low it is
+ * not a performance drain.
+ *
+ * It's almost certain that the front object construction can be
+ * placed in a library for reuse.
  */
 
-// NOTE: There is a lesson here, which is that for some kinds of data
-// structures, it would be nice to generate JS code to act as front
-// objects.  IntQueue is a case in point.
-//
-// We need a three-pronged API:
-//  - new IntQueue(length) => IQ
-//  - IQ.reference => pointer
-//  - IntQueue.fromReference(pointer) => IQ
-//
-// Use the first one in any worker, then send the pointer and
-// reconstitute it in any other worker.
-//
-// Or, don't bother with the front object, just expose the fact that
-// the IntQueue is in shared memory and require shared-memory syntax
-// to use it.
-
-function FrontObject(constructorName, reprType, methods) {
-    // ???
-    var actual = function () {}
-    var constructor = function (...args) {
-	var p = reprType.initInstance(FlatJS.allocOrThrow(reprType.SIZE, reprType.ALIGN));
-	this._repr = reprType.init ? reprType.init(p, ...args) : p;
-    }
-    constructor.name = constructorName;
-    for ( var [name,arity] of methods ) {
-	constructor.prototype.name = function (...args) {
-	    reprType[name].(this._repr, ...args);
-	}
-    }
-    constructor.fromReference = function (p) {}
-    return constructor;
+/*
+ * Allocate a new queue in shared memory, and its local front object.
+ * "length" is the capacity of the queue in number of integer
+ * elements.
+ *
+ * The _repr argument is for internal use.
+ */
+function IntQueue(length, _repr) {
+    if (typeof length == "number")
+	this._repr = IntQueueRepr.init(@new IntQueueRepr, length);
+    else
+	this._repr = _repr;
 }
 
-var IntQueue = FrontObject("IntQueue", 1, IntQueueRepr, [["enqueue",2], ["dequeue",2]]);
-//                         constructor    repr type       method/arity ...
+/*
+ * Given a pointer to the shared-memory representation, create a local
+ * front object.
+ */
+IntQueue.fromReference = function (ref) {
+    return new IntQueue(IntQueue, ref);
+}
 
-// FIXME!
+/*
+ * Retrieve the pointer to the shared-memory representation.
+ */
+Object.defineProperty(IntQueue.prototype, "reference", { get: function () { return this._repr; } });
 
 /*
  * Enters an element into the queue, waits until space is available or
@@ -57,9 +63,9 @@ var IntQueue = FrontObject("IntQueue", 1, IntQueueRepr, [["enqueue",2], ["dequeu
  * ints is a dense Array of Int32 values.
  * Returns true if it succeeded, false if it timed out.
  */
-// IntQueue.prototype.enqueue = function(ints, t) {
-//     return IntQueueRepr.enqueue(this._repr, ints, t);
-// }
+IntQueue.prototype.enqueue = function(ints, t) {
+    return IntQueueRepr.enqueue(this._repr, ints, t);
+}
 
 /*
  * Returns an element from the queue if there's one, or waits up to t
@@ -68,9 +74,9 @@ var IntQueue = FrontObject("IntQueue", 1, IntQueueRepr, [["enqueue",2], ["dequeu
  *
  * The element is returned as a dense Array of Int32 values.
  */
-// IntQueue.prototype.dequeue = function(t) {
-//     return IntQueueRepr.dequeue(this._repr, t);
-// }
+IntQueue.prototype.dequeue = function(t) {
+    return IntQueueRepr.dequeue(this._repr, t);
+}
 
 // Private code below this point
 
@@ -85,17 +91,11 @@ var IntQueue = FrontObject("IntQueue", 1, IntQueueRepr, [["enqueue",2], ["dequeu
     queue: array(int32)
     length: int32;
 
-    // Note, this is wrong except in the first worker that uses it.
-
     @method init(SELF, length) {
 	SELF.length = length;
 	SELF.queue = @new array(int32, length);
 	return SELF;
     }
-
-    // None of these are virtual and we should not pay for vcall overhead.
-    // But can that be optimized out (under what assumptions?) or should
-    // there be annotations?
 
     @method enqueue(SELF, ints, timeout) {
 	var required = ints.length + 1;
@@ -159,7 +159,7 @@ var IntQueue = FrontObject("IntQueue", 1, IntQueueRepr, [["enqueue",2], ["dequeu
 
     @method releaseWithDataAvailable(SELF) {
 	SELF.dataAvailable += 1;
-	this.release();
+	SELF.release();
     }
 
     @method acquire(SELF) {

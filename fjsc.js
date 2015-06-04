@@ -1054,8 +1054,9 @@ function expandSelfAccessors() {
                     return t.name + "." + m.substring(5) + "SELF, ";
                 });
                 body[k] = body[k].replace(self_invoke_re, function (m, p, s) {
-                    // Issue #23: the comma is not always correct.
-                    return t.name + "." + m.substring(5) + "SELF, ";
+                    var pp = new ParamParser(t.file, t.line, s, p + m.length);
+                    var args = pp.allArgs();
+                    return t.name + "." + m.substring(5) + "SELF" + (args.length > 0 ? ", " : " ");
                 });
                 body[k] = body[k].replace(self_getter_re, function (m, p, s) {
                     return t.name + "." + m.substring(5) + "(SELF)";
