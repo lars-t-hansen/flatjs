@@ -658,6 +658,7 @@ class ParamParser {
 		break;
 	    case '\'':
 	    case '"':
+	    case '`':
 		// Issue #5: implement string support
 		throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
 	    }
