@@ -2,18 +2,10 @@
 //
 // Note, this is not currently legal since structs can't carry methods.
 
-// There is a lesson here, about constructors in flatjs classes.  If
-// there is a Lock structure with its own constructor, then that
-// constructor will always be invoked by the IntQueueRepr constructor,
-// to initialize the lock word.  But that probably should only be done
-// in one thread.  With the init method we can control that, with a
-// constructor we cannot.
-
 @flatjs struct Lock {
     // Clearly "private" is desirable
     lock: synchronic int32
 
-    // Clearly a constructor would be better
     @method init(SELF) {
 	SELF.lock = 0;
 	return SELF;
