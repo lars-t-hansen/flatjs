@@ -7,11 +7,11 @@ FlatJS.init(ab, true);
 // Synchronic fields of class
 
 @flatjs class Counter {
-    count:synchronic int32
-    xyzzy:synchronic uint8
+    count:int32.synchronic
+    xyzzy:uint8.synchronic
 
     @method init(SELF, x) {
-	SELF.set_count(x);	// synchronic store
+	SELF.count.set(x);	// synchronic store
 	return SELF;
     }
 
@@ -25,40 +25,40 @@ FlatJS.init(ab, true);
 
 var c = Counter.init(@new Counter, 7);
 
-Counter.add_count(c, 1);
+Counter.count.add(c, 1);
 assertEq(Counter.count(c), 8);	// Atomics.load, here and below
 
-Counter.compareExchange_count(c, 8, 4);
+Counter.count.compareExchange(c, 8, 4);
 assertEq(Counter.count(c), 4);
 
-Counter.sub_count(c, 1);
+Counter.count.sub(c, 1);
 assertEq(Counter.count(c), 3);
 
-Counter.or_count(c, 0xB1);
+Counter.count.or(c, 0xB1);
 assertEq(Counter.count(c), 0xB3);
 
-Counter.and_count(c, 0x1A2);
+Counter.count.and(c, 0x1A2);
 assertEq(Counter.count(c), 0xA2);
 
-Counter.xor_count(c, 0xFF);
+Counter.count.xor(c, 0xFF);
 assertEq(Counter.count(c), 0x5D);
 
-Counter.add_xyzzy(c, 384);
+Counter.xyzzy.add(c, 384);
 assertEq(Counter.xyzzy(c), 384%256);
 
 // Synchronic fields of structures within array
 
 @flatjs struct Cnt {
-    count:synchronic int32
+    count:int32.synchronic
 } @end
 
-var p = @new array(Cnt, 10);
+var p = @new Cnt.Array(10);
 
-Cnt.array_add_count(p, 5, 1);
-assertEq(Cnt.array_get_count(p, 5), 1);
+Cnt.Array.count.add(p, 5, 1);
+assertEq(Cnt.Array.count.at(p, 5), 1);
 
 setSharedArrayBuffer(ab);
-Counter.set_count(c, 0);
+Counter.count.set(c, 0);
 
 evalInWorker(`
 load("../libflatjs.js");
@@ -77,17 +77,17 @@ var c = ${c};
 // file and just having a one-liner program here, to load that file.
 // That file could be preprocessed independently.
 
-Counter.loadWhenNotEqual_count(c, 0);
+Counter.count.loadWhenNotEqual(c, 0);
 var then = Date.now();
 sleep(1);
-Counter.set_count(c, 2);
+Counter.count.set(c, 2);
 console.log("Should be about 1000: " + (Date.now() - then));
 `);
 
 sleep(1);
 var then = Date.now();
-Counter.set_count(c, 1);
-Counter.loadWhenNotEqual_count(c, 1);
+Counter.count.set(c, 1);
+Counter.count.loadWhenNotEqual(c, 1);
 console.log("Should be about 1000: " + (Date.now() - then));
 
 console.log("Done");

@@ -1,4 +1,4 @@
-/* -*- mode: javascript -*- */
+/* -*- mode: javascript; electric-indent-local-mode: nil -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -408,13 +408,13 @@ InternalError.prototype = new CapturedError("InternalError");
 function UsageError(msg) { this.message = "Usage error: " + msg; }
 UsageError.prototype = new CapturedError("UsageError");
 
-function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; };
+function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; console.log(this.message); };
 ProgramError.prototype = new CapturedError("ProgramError");
 
 const allSources:Source[] = [];
 
 function main(args: string[]):void {
-    try {
+//    try {
 	for ( let input_file of args ) {
 	    if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
 		throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
@@ -437,30 +437,42 @@ function main(args: string[]):void {
 
 	for ( let s of allSources )
 	    fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
+/*
     }
     catch (e) {
 	console.log(e.message);
-	//console.log(e);
+	console.log(e);
     }
+*/
 }
 
 const Ws = "\\s+";
 const Os = "\\s*";
-const Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed
+const Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed yet
 const Lbrace = Os + "\\{";
 const Rbrace = Os + "\\}";
-const Comment = Os + "(?:\\/\\/.*)?";
+const LParen = Os + "\\(";
+const CommentOpt = Os + "(?:\\/\\/.*)?";
+const QualifierOpt = "(?:\\.(atomic|synchronic))?"
+const OpNames = "at|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
+const Operation = "(?:\\.(" + OpNames + "))";
+const OperationOpt = Operation + "?";
+const OperationLParen = "(?:\\.(" + OpNames + ")" + LParen + ")";
+const NullaryOperation = "(?:\\.(ref|notify))";
+const Path = "((?:\\." + Id + ")+)";
+const PathLazy = "((?:\\." + Id + ")+?)";
+const PathOpt = "((?:\\." + Id + ")*)";
+const AssignOp = "(=|\\+=|-=|&=|\\|=|\\^=)(?!=)";
 
 const start_re = new RegExp("^" + Os + "@flatjs" + Ws + "(?:struct|class)" + Ws + "(?:" + Id + ")");
-const end_re = new RegExp("^" + Rbrace + Os + "@end" + Comment + "$");
-const struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + Comment + "$");
-const class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + Comment + "$");
-const special_re = new RegExp("^" + Os + "@(get|set|copy)" + Os + "(\\(" + Os + "SELF.*)$");
-const method_re = new RegExp("^" + Os + "@(method|virtual)" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "SELF.*)$");
-const blank_re = new RegExp("^" + Os + Comment + "$");
+const end_re = new RegExp("^" + Rbrace + Os + "@end" + CommentOpt + "$");
+const struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + CommentOpt + "$");
+const class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + CommentOpt + "$");
+const special_re = new RegExp("^" + Os + "@(get|set)" + "(" + LParen + Os + "SELF.*)$");
+const method_re = new RegExp("^" + Os + "@(method|virtual)" + Ws + "(" + Id + ")" + "(" + LParen + Os + "SELF.*)$");
+const blank_re = new RegExp("^" + Os + CommentOpt + "$");
 const space_re = new RegExp("^" + Os + "$");
-const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(?:(atomic|synchronic)" + Ws + ")?(" + Id + ")" + Os + ";?" + Comment + "$");
-const aprop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "array" + Os + "\\(" + Os + "(" + Id + ")" + Os + "\\)" + Os + ";?" + Comment + "$");
+const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(" + Id + ")" + QualifierOpt + "(?:\.(Array))?" + Os + ";?" + CommentOpt + "$");
 
 function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string[]] {
     let defs:UserDefn[] = [];
@@ -549,14 +561,11 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	    }
 	    else if (m = prop_re.exec(l)) {
 		let qual = PropQual.None;
-		switch (m[2]) {
+		switch (m[3]) {
 		case "synchronic": qual = PropQual.Synchronic; break;
 		case "atomic": qual = PropQual.Atomic; break;
 		}
-		properties.push(new Prop(i, m[1], qual, false, m[3]));
-	    }
-	    else if (m = aprop_re.exec(l)) {
-		properties.push(new Prop(i, m[1], PropQual.None, true, m[2]));
+		properties.push(new Prop(i, m[1], qual, m[4] == "Array", m[2]));
 	    }
 	    else if (blank_re.test(l)) {
 	    }
@@ -691,7 +700,7 @@ class ParamParser {
 	if (this.done && depth > 0)
 	    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - still nested within parentheses.");
 	if (this.done && this.requireRightParen && !sawRightParen)
-	    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - expected ')'.");
+	    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - expected ')'.  " + this.input);
 
 	return result;
     }
@@ -935,7 +944,7 @@ function layoutDefn(d:UserDefn, map:SMap<MapEntry>, size:number, align:number):v
 	    let root = p.name;
 	    let mIter = st.map.values();
 	    for ( let fld=mIter.next() ; fld ; fld=mIter.next() ) {
-		let fldname = root + "_" + fld.name;
+		let fldname = root + "." + fld.name;
 		map.put(fldname, new MapEntry(fldname, fld.expand, size + fld.offset, fld.type));
 	    }
 	    size += st.size;
@@ -1038,10 +1047,11 @@ function findMethodImplFor(cls:ClassDefn, stopAt:ClassDefn, name:string):string 
 // there's no reliable left-context handling.  Need to add
 // programmatic guards for that.
 
-const self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
-const self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
-const self_invoke_re = /SELF\.[a-zA-Z0-9]+\s*\(/g;
-const self_setter_re = /SELF\.([a-zA-Z0-9_]+)\s*(=|\+=|-=|&=|\|=|\^=)(?!=)\s*/g;
+const self_getter1_re = new RegExp("SELF" + Path + NullaryOperation, "g");
+const self_getter2_re = new RegExp("SELF" + Path, "g");
+const self_accessor_re = new RegExp("SELF" + Path + OperationLParen, "g");
+const self_setter_re = new RegExp("SELF" + Path + Os + AssignOp + Os, "g");
+const self_invoke_re = new RegExp("SELF\\.(" + Id + ")" + LParen, "g");
 
 // Name validity will be checked on the next expansion pass.
 
@@ -1055,16 +1065,19 @@ function expandSelfAccessors():void {
 				     return replaceSetterShorthand(file, line, s, p, m, t);
 				 },
 				 body[k]);
-		body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "SELF, ";
+		body[k] = body[k].replace(self_accessor_re, function (m, path, operation, p, s) {
+		    return t.name + path + "." + operation + "(SELF, ";
 		});
-		body[k] = body[k].replace(self_invoke_re, function (m, p, s) {
+		body[k] = body[k].replace(self_invoke_re, function (m, id, p, s) {
 		    var pp = new ParamParser(t.file, t.line, s, p+m.length);
 		    var args = pp.allArgs();
-		    return t.name + "." + m.substring(5) + "SELF" + (args.length > 0 ? ", " : " ");
+		    return t.name + "." + id + "(SELF" + (args.length > 0 ? ", " : " ");
 		});
-		body[k] = body[k].replace(self_getter_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "(SELF)";
+		body[k] = body[k].replace(self_getter1_re, function (m, path, operation, p, s) {
+		    return t.name + path + "." + operation + "(SELF)";
+		});
+		body[k] = body[k].replace(self_getter2_re, function (m, path, p, s) {
+		    return t.name + path + "(SELF)";
 		});
 	    }
 	}
@@ -1097,13 +1110,16 @@ const AssignmentOps =
 
 function replaceSetterShorthand(file:string, line:number, s:string, p:number, ms:RegExpExecArray, t:UserDefn):[string,number] {
     //return [s, p+m.length];
+    let m = ms[0];
+    let path = ms[1];
+    let operation = ms[2];
     let left = s.substring(0,p);
-    let pp = new ParamParser(file, line, s, p+ms[0].length, false, true);
+    let pp = new ParamParser(file, line, s, p+m.length, false, true);
     let rhs = pp.nextArg();
     if (!rhs)
         throw new ProgramError(file, line, "Missing right-hand-side expression in assignment");
     // Be sure to re-expand the RHS.
-    let substitution_left = `${left} ${t.name}.${AssignmentOps[ms[2]]}_${ms[1]}(SELF, `;
+    let substitution_left = `${left} ${t.name}${path}.${AssignmentOps[operation]}(SELF, `;
     return [`${substitution_left} ${rhs})${pp.sawSemi ? ';' : ''} ${s.substring(pp.where)}`,
 	    substitution_left.length];
 }
@@ -1205,6 +1221,7 @@ function expandGlobalAccessorsAndMacros():void {
     for ( let source of allSources ) {
 	let lines = source.lines;
 	let nlines: string[] = [];
+	// FIXME: This is a bogus line number, because it is post-pasteup.
 	for ( let j=0 ; j < lines.length ; j++ )
 	    nlines.push(expandMacrosIn(source.input_file, j+1, lines[j]))
 	source.lines = nlines;
@@ -1215,9 +1232,17 @@ function expandGlobalAccessorsAndMacros():void {
 // represented as a class, with a ton of methods and locals (eg for
 // file and line), performing expansion on one line.
 
-const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(?:(set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)_)?([a-zA-Z0-9_]+)\s*\(/g;
-const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
-const new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
+//const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(?:(set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)_)?([a-zA-Z0-9_]+)\s*\(/g;
+//const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
+//const new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
+
+
+const new_re = new RegExp("@new\\s+(" + Id + ")" + QualifierOpt + "(?:\\.(Array)" + LParen + ")?", "g");
+
+const acc_re = new RegExp("(" + Id + ")" + PathLazy + "(?:" + Operation + "|)" + LParen, "g");
+
+// It would sure be nice to avoid the explicit ".Array" here, but I don't yet know how.
+const arr_re = new RegExp("(" + Id + ")" + QualifierOpt + "\\.Array" + PathOpt + Operation + LParen, "g");
 
 function expandMacrosIn(file:string, line:number, text:string):string {
     return myExec(file, line, new_re, newMacro,
@@ -1264,17 +1289,18 @@ const OpAttr = {
     "compareExchange": { arity: 3, atomic: "compareExchange", synchronic: "_synchronicCompareExchange" },
 };
 
+//    "at": { arity: 1, atomic: "", synchronic: "" }
+
 function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
+    //console.log(ms.join("  "));
     let m = ms[0];
     let className = ms[1];
-    let operation = ms[2];
-    let propName = ms[3];
+    let propName = ms[2].substring(1); // Strip the leading "."
+    let operation = ms[3] ? ms[3] : "get";
 
     let nomatch:[string,number] = [s, p+m.length];
     let left = s.substring(0,p);
 
-    if (!operation)
-	operation = "get";
     let ty = knownTypes.get(className);
     if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
 	return nomatch;
@@ -1294,7 +1320,7 @@ function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
     if (OpAttr[operation].arity != as.length) {
-	warning(file, line, `Bad accessor arity ${propName} / ${as.length}`);
+	warning(file, line, `Bad accessor arity ${propName} / ${as.length}: ` + s);
 	return nomatch;
     };
 
@@ -1427,9 +1453,17 @@ function loadFromRef(file:string, line:number,
 function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];
     let typeName=ms[1];
-    let operation=ms[2];
-    let field=ms[3];
+    let qualifier=ms[2];
+    let field=ms[3] ? ms[3].substring(1) : "";
+    let operation=ms[4];
     let nomatch:[string,number] = [s,p+m.length];
+
+    if (operation == "get" || operation == "set")
+	throw new ProgramError(file, line, "Use 'at' and 'setAt' on Arrays");
+    if (operation == "at")
+	operation = "get";
+    if (operation == "setAt")
+	operation = "set";
 
     let type = findType(typeName);
     if (!type)
@@ -1438,7 +1472,7 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
 
-    if (OpAttr[operation].arity+1 != as.length) {
+    if (as.length != OpAttr[operation].arity+1) {
 	warning(file, line, `Wrong arity for accessor ${operation} / ${as.length}`);
 	return nomatch;
     };
@@ -1469,16 +1503,27 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
 
 function newMacro(file, line, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];
-    let arrayType=ms[1];
-    let classType=ms[2];
+    let baseType=ms[1];
+    let qualifier=ms[2];
+    let isArray=ms[3] == "Array";
     let left = s.substring(0,p);
-    if (classType !== undefined) {
-	let t = knownTypes.get(classType);
-	if (!t)
-	    throw new ProgramError(file, line, "Unknown type argument to @new: " + classType);
+
+    // FIXME - implement this.
+    if (qualifier)
+	throw new InternalError("Qualifiers on array @new not yet implemented");
+
+    let t = knownTypes.get(baseType);
+    if (!t)
+	throw new ProgramError(file, line, "Unknown type argument to @new: " + baseType);
+
+    if (!isArray) {
+	// FIXME - lift this restriction for primitives and structs
+	if (t.kind != DefnKind.Class)
+	    throw new ProgramError(file, line, "Cannot instantiate value types directly (yet)");
+
 	// NOTE, parens removed here
 	// Issue #16: Watch it: Parens interact with semicolon insertion.
-	let expr = classType + ".initInstance(FlatJS.allocOrThrow(" + t.size + "," + t.align + "))";
+	let expr = baseType + ".initInstance(FlatJS.allocOrThrow(" + t.size + "," + t.align + "))";
 	return [left + expr + s.substring(p + m.length),
 		left.length + expr.length ];
     }
@@ -1486,11 +1531,8 @@ function newMacro(file, line, s:string, p:number, ms:RegExpExecArray):[string,nu
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = pp.allArgs();
     if (as.length != 1)
-	throw new ProgramError(file, line, "Wrong number of arguments to @new array(" + arrayType + ")");
+	throw new ProgramError(file, line, "Wrong number of arguments to @new " + baseType + ".Array");
 
-    let t = findType(arrayType);
-    if (!t)
-	throw new ProgramError(file, line, "Unknown type argument to @new array: " + arrayType);
     // NOTE, parens removed here
     // Issue #16: Watch it: Parens interact with semicolon insertion.
     let expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(file, line, endstrip(as[0])) + ", " + t.elementAlign + ")";

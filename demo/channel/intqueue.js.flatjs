@@ -81,19 +81,19 @@ IntQueue.prototype.dequeue = function(t) {
 // Private code below this point
 
 @flatjs class IntQueueRepr {
-    spaceAvailable: synchronic int32
-    dataAvailable: synchronic int32
+    spaceAvailable: int32.synchronic
+    dataAvailable: int32.synchronic
 
-    lock: synchronic int32
+    lock: int32.synchronic
     head: int32
     tail: int32
     used: int32
-    queue: array(int32)
+    queue: int32.Array
     length: int32;
 
     @method init(SELF, length) {
 	SELF.length = length;
-	SELF.queue = @new array(int32, length);
+	SELF.queue = @new int32.Array(length);
 	return SELF;
     }
 
@@ -106,10 +106,10 @@ IntQueue.prototype.dequeue = function(t) {
 	var q = SELF.queue;
 	var qlen = SELF.length;
 	var tail = SELF.tail;
-	int32.array_set(q, tail, ints.length);
+	int32.Array.setAt(q, tail, ints.length);
 	tail = (tail + 1) % qlen;
 	for ( var i=0 ; i < ints.length ; i++ ) {
-	    int32.array_set(q, tail, ints[i]);
+	    int32.Array.setAt(q, tail, ints[i]);
 	    tail = (tail + 1) % qlen;
 	}
 	SELF.tail = tail;
@@ -133,7 +133,7 @@ IntQueue.prototype.dequeue = function(t) {
 	    var remaining = limit - Date.now();
 	    if (remaining <= 0)
 		return false;
-	    SELF.expectUpdate_spaceAvailable(probe, remaining);
+	    SELF.spaceAvailable.expectUpdate(probe, remaining);
 	}
     }
 
@@ -148,7 +148,7 @@ IntQueue.prototype.dequeue = function(t) {
 	    var remaining = limit - Date.now();
 	    if (remaining <= 0)
 		return false;
-	    SELF.expectUpdate_dataAvailable(probe, remaining);
+	    SELF.dataAvailable.expectUpdate(probe, remaining);
 	}
     }
 
@@ -163,8 +163,8 @@ IntQueue.prototype.dequeue = function(t) {
     }
 
     @method acquire(SELF) {
-	while (SELF.compareExchange_lock(0, 1) != 0)
-	    SELF.expectUpdate_lock(1, Number.POSITIVE_INFINITY);
+	while (SELF.lock.compareExchange(0, 1) != 0)
+	    SELF.lock.expectUpdate(1, Number.POSITIVE_INFINITY);
     }
 
     @method release(SELF) {

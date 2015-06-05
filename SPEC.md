@@ -96,26 +96,23 @@ with named, mutable fields.
 
   Comment ::= "//" Not-EOL*
 
-  Type ::= AtomicType | ValType | ArrayType
-  AtomicType ::= ("atomic" | "synchronic") ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32")
-  ValType ::= "int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32"
+  Type ::= ValType | ArrayType
+  ValType ::= ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32") (".atomic" | ".synchronic")?
             | "float32" | "float64"
 	    | "int32x4" | "float32x4" | "float64x2"
             | Id
-  ArrayType ::= array(ValType)
+  ArrayType ::= ValType ".Array"
 
   Struct-Method ::= "@get" "(" "SELF" ")" Function-body
                   | "@set" "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
 
   Parameter ::= Id (":" Tokens-except-comma-or-rightparen )?
 
-  Id ::= [A-Za-z][A-Za-z0-9]*
+  Id ::= [A-Za-z_][A-Za-z0-9_]*
 ```
 
 Note the following:
 
-* Underscore is not currently a legal character in an Id.  That is because the
-  underscore is used as part of the macro syntax.
 * The annotation on the Parameter is not used by FlatJS, but is allowed in order
   to interoperate with TypeScript.
 * The restriction of properties before methods is a matter of economizing on the
@@ -131,6 +128,11 @@ A field of struct type gives rise to a named substructure within the
 outer structure that contains the fields of the nested struct.  No struct
 may in this way include itself.
 
+
+### Dynamic semantics
+
+Within the body of a method, "this" denotes the type object carrying
+the method.
 
 ### Translation
 
@@ -160,32 +162,32 @@ If a field Fk does not have struct type then the following functions
 are defined:
 
 * R.Fk(self) => value of self.Fk field
-* R.set_Fk(self, v) => void; set value of self.Fk field to v
+* R.Fk.set(self, v) => void; set value of self.Fk field to v
 
 If a field Fk is designated "atomic" then the getter and setter just
 shown use atomic loads and stores.  In addition, the following atomic
 functions are defined:
   
-* R.compareExchange_Fk(self, o, n) => if the value of self.Fk field is o then store n; return old value
-* R.add_Fk(self, v) => add v to value of self.Fk field; return old value
-* R.sub_Fk(self, v) => subtract v from value of self.Fk field; return old value
-* R.and_Fk(self, v) => and v into value of self.Fk field; return old value
-* R.or_Fk(self, v) => or v into value of self.Fk field; return old value
-* R.xor_Fk(self, v) => xor v to value of self.Fk field; return old value
+* R.Fk.compareExchange(self, o, n) => if the value of self.Fk field is o then store n; return old value
+* R.Fk.add(self, v) => add v to value of self.Fk field; return old value
+* R.Fk.sub(self, v) => subtract v from value of self.Fk field; return old value
+* R.Fk.and(self, v) => and v into value of self.Fk field; return old value
+* R.Fk.or(self, v) => or v into value of self.Fk field; return old value
+* R.Fk.xor(self, v) => xor v to value of self.Fk field; return old value
 
 If a field Fk is designated "synchronic" then the setter and atomics
 just shown are synchronic-aware (every update sends a notification).
 In addition, the following synchronic functions are defined:
 
-* R.expectUpdate_Fk(self, v, t) => void; wait until the value of the 
+* R.Fk.expectUpdate(self, v, t) => void; wait until the value of the 
   self.Fk field is observed not to hold v, or until t milliseconds have passed
-* R.loadWhenEqual_Fk(self, v) => wait until the value of the self.Fk
+* R.Fk.loadWhenEqual(self, v) => wait until the value of the self.Fk
   field is observed to hold v, then return the value of that field
   (which might have changed since it was observed to hold v)
 * R.loadWhenNotEqual_Fk(self, v) => wait until the value of the self.Fk
   field is observed not to hold v, then return the value of that field
   (which might have changed back to v since it was observed)
-* R.notify_Fk(self) => wake all waiters on self.Fk, making them re-check
+* R.Fk.notify(self) => wake all waiters on self.Fk, making them re-check
   their conditions.
 
 If a field Fk has a struct type T with fields G1 .. Gm then the
@@ -193,12 +195,12 @@ following functions are defined:
 
 * R.Fk(self) => if T does not have a @get method then this is undefined.
   Otherwise, a function that invokes the @get method on a reference to self.Fk.
-* R.set_Fk(self, ...args) => if T does not have a @set method then this
+* R.Fk.set(self, ...args) => if T does not have a @set method then this
   is undefined.  Otherwise, a function that invokes the @set method on a
   reference to self.Fk and ...args
-* R.ref_Fk(self) => A reference to self.FK.
+* R.Fk.ref(self) => A reference to self.FK.
 * Getters, setters, and accessors for fields G1 through Gm within Fk,
-  with the general pattern R.Fk_Gi(self) and R.op_Fk_Gi(self,...), by
+  with the general pattern R.Fk.Gi(self) and R.Fk.Gi.op(self,...), by
   the rules above.
 
 
@@ -265,6 +267,11 @@ Before memory for a class instance can be used as a class instance,
 the class's initInstance method must be invoked on the memory. 
 If used, the ```@new``` operator (see below) invokes initInstance
 on behalf of the program.
+
+Within the body of a method, "this" denotes the type object carrying
+the method.  (Thus the calls ```SELF.method(...)``` and
+```this.method(SELF,...)``` are equivalent.)
+
 
 ### Translation
 
@@ -334,14 +341,20 @@ memory for n*int32.SIZE.
 
 Suppose A is some type.
 
-* A.array_get(ptr, i) reads the ith element of an array of A
+* A.Array.at(ptr, i) reads the ith element of an array of A
   whose base address is ptr.  Not bounds checked.  If the base
   type of the array is a structure type this will only work if
   the type has a ```@get``` method.
-* A.array_set(ptr, i, v) writes the ith element of an array of A
+* A.Array.setAt(ptr, i, v) writes the ith element of an array of A
   whose base address is ptr.  Not bounds checked.  If the base
   type of the array is a structure type this will only work if
   the type has an ```@set``` method.
+* If the base type A is a structure type then the path to a field
+  within the structure can be denoted: A.Array.x.y.at(ptr, i)
+  returns the x.y field of the ith element of the array ptr.
+  Ditto for setAt.
+
+NOTE: Arrays of atomics and synchronics, and operations on those, will appear.
 
 
 ## @new macro
@@ -353,7 +366,7 @@ type T expands into this:
   T.initInstance(FlatJS.allocOrThrow(T.SIZE, T.ALIGN))
 ```
 An array may also be allocated and initialized with ```@new```.
-Specifically, ```@new array(T,n)``` for type T expands into
+Specifically, ```@new T.Array(n)``` for type T expands into
 this:
 ```
   FlatJS.allocOrThrow(n*<size>, <align>)
@@ -362,6 +375,7 @@ where *size* is int32.SIZE if T is a reference type or T.SIZE
 otherwise, and *align* is int32.ALIGN if T is a reference type
 and T.ALIGN otherwise.
 
+NOTE: Arrays of atomics and synchronics, and operations on those, will appear.
 
 ## SELF accessor macros
 
@@ -456,15 +470,12 @@ output a file for each input file.
 Type IDs must be unique and invariant across workers, which are all
 running different programs.
 
-A type ID could be the hash value of a string representing the name
-and structure of a type.
+A type ID is the hash value of a string representing the name of a
+type.
 
-If a program has two types with the same type ID then the program
-cannot be translated.  A fix is likely to change the name of one of
+NOTE: If a program has two types with the same type ID then the program
+cannot be translated.  A workaround is to change the name of one of
 the conflicting types.  If this turns out to be a constant problem we
 can introduce a notion of a "brand" on a type which is just a fudge
 factor to make the type IDs work out.  (This scales poorly but is
 probably OK in practice.)
-
-Eg, O>Triangle>Surface>> is a unique identifier but does not help us
-catch errors easily.

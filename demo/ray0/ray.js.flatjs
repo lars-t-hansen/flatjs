@@ -116,14 +116,14 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
 @flatjs class Scene extends Surface {
     length: int32
-    objects: array(Surface)
+    objects: Surface.Array
 
     @method init(SELF, objects) {
 	var len = objects.length;
 	SELF.length = len;
-	var objs = @new array(Surface, len);
+	var objs = @new Surface.Array(len);
 	for ( var i=0 ; i < len ; i++ )
-	    Surface.array_set(objs, i, objects[i]);
+	    Surface.Array.setAt(objs, i, objects[i]);
 	SELF.objects = objs;
 	return SELF;
     }
@@ -134,7 +134,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
 	var objs = SELF.objects;
 	for ( var idx=0, limit=SELF.length ; idx < limit ; idx++ ) {
-	    var surf = Surface.array_get(objs, idx);
+	    var surf = Surface.Array.at(objs, idx);
 	    var tmp = Surface.intersect(surf, eye, ray, min, max);
 	    var obj = tmp.obj;
 	    var dist = tmp.dist;
@@ -163,7 +163,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     @virtual intersect(SELF, eye, ray, min, max) {
 	var DdotD = dot(ray, ray);
-	var EminusC = subvref(eye, SELF.ref_center);
+	var EminusC = subvref(eye, SELF.center.ref);
 	var B = dot(ray, EminusC);
 	var disc = B*B - DdotD*(dot(EminusC,EminusC) - SELF.radius*SELF.radius);
 	if (disc < 0.0)
@@ -182,7 +182,7 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
     }
 
     @virtual normal(SELF, p) {
-	return divi(subvref(p, SELF.ref_center), SELF.radius);
+	return divi(subvref(p, SELF.center.ref), SELF.radius);
     }
 } @end
 
@@ -204,18 +204,18 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 	// and stored with the triangle (for a given eye position), at some (possibly significant)
 	// space cost.  Notably the numerator of "t" is invariant, as are many factors of the
 	// numerator of "gamma".
-	var a = SELF.v1_x - SELF.v2_x;
-	var b = SELF.v1_y - SELF.v2_y;
-	var c = SELF.v1_z - SELF.v2_z;
-	var d = SELF.v1_x - SELF.v3_x;
-	var e = SELF.v1_y - SELF.v3_y;
-	var f = SELF.v1_z - SELF.v3_z;
+	var a = SELF.v1.x - SELF.v2.x;
+	var b = SELF.v1.y - SELF.v2.y;
+	var c = SELF.v1.z - SELF.v2.z;
+	var d = SELF.v1.x - SELF.v3.x;
+	var e = SELF.v1.y - SELF.v3.y;
+	var f = SELF.v1.z - SELF.v3.z;
 	var g = ray.x;
 	var h = ray.y;
 	var i = ray.z;
-	var j = SELF.v1_x - eye.x;
-	var k = SELF.v1_y - eye.y;
-	var l = SELF.v1_z - eye.z;
+	var j = SELF.v1.x - eye.x;
+	var k = SELF.v1.y - eye.y;
+	var l = SELF.v1.z - eye.z;
 	var M = a*(e*i - h*f) + b*(g*f - d*i) + c*(d*h - e*g);
 	var t = -((f*(a*k - j*b) + e*(j*c - a*l) + d*(b*l - k*c))/M);
 	if (t < min || t > max)
@@ -231,35 +231,35 @@ function MaterialV(diffuse, specular, shininess, ambient, mirror) {
 
     @virtual normal(SELF, p) {
 	// TODO: Observe that the normal is invariant and can be stored with the triangle
-	return normalize(cross(subrefref(SELF.ref_v2, SELF.ref_v1), subrefref(SELF.ref_v3, SELF.ref_v1)));
+	return normalize(cross(subrefref(SELF.v2.ref, SELF.v1.ref), subrefref(SELF.v3.ref, SELF.v1.ref)));
     }
 
 } @end
 
 @flatjs class Bitmap {
-    data: array(int32)
+    data: int32.Array
     height: int32
     width: int32
 
     @method init(SELF, height, width, color) {
 	SELF.height = height;
 	SELF.width = width;
-	var data = @new array(int32, height*width);
+	var data = @new int32.Array(height*width);
 	var c = (255<<24)|((255*color.z)<<16)|((255*color.y)<<8)|(255*color.x)
 	for ( var i=0, l=width*height ; i < l ; i++ )
-	    int32.array_set(data, i, c);
+	    int32.Array.setAt(data, i, c);
 	SELF.data = data;
 	return SELF;
     }
 
     // For debugging only
     @method ref(SELF, y, x) {
-	return int32.array_get(SELF.data, (SELF.height-y)*SELF.width+x);
+	return int32.Array.at(SELF.data, (SELF.height-y)*SELF.width+x);
     }
 
     // Not a hot function
     @method setColor(SELF, y, x, v) {
-	int32.array_set(SELF.data, (SELF.height-y-1)*SELF.width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
+	int32.Array.setAt(SELF.data, (SELF.height-y-1)*SELF.width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
     }
 } @end
 
@@ -432,7 +432,7 @@ function raycolor(eye, ray, t0, t1, depth) {
     var dist = tmp.dist;
 
     if (obj) {
-	const m = Surface.ref_material(obj);
+	const m = Surface.material.ref(obj);
 	const p = add(eye, muli(ray, dist));
 	const n1 = Surface.normal(obj, p);
 	const l1 = normalize(sub(light, p));
@@ -451,7 +451,7 @@ function raycolor(eye, ray, t0, t1, depth) {
 	    const v1 = normalize(neg(ray));
 	    const h1 = normalize(add(v1, l1));
 	    const specular = Math.pow(Math.max(0.0, dot(n1, h1)), Material.shininess(m));
-	    c = add(c, add(mulrefi(Material.ref_diffuse(m),diffuse), mulrefi(Material.ref_specular(m),specular)));
+	    c = add(c, add(mulrefi(Material.diffuse.ref(m),diffuse), mulrefi(Material.specular.ref(m),specular)));
 	    if (reflection)
 		if (depth > 0.0 && Material.mirror(m) != 0.0) {
 		    const r = sub(ray, muli(n1, 2.0*dot(ray, n1)));
