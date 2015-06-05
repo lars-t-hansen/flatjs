@@ -441,6 +441,14 @@ var SSet = (function () {
     };
     return SSet;
 })();
+var SourceLine = (function () {
+    function SourceLine(file, line, text) {
+        this.file = file;
+        this.line = line;
+        this.text = text;
+    }
+    return SourceLine;
+})();
 var Source = (function () {
     function Source(input_file, output_file, defs, lines) {
         this.input_file = input_file;
@@ -448,50 +456,50 @@ var Source = (function () {
         this.defs = defs;
         this.lines = lines;
     }
+    Source.prototype.allText = function () {
+        return this.lines.map(function (x) { return x.text; }).join("\n");
+    };
     return Source;
 })();
 function CapturedError(name) { this.name = name; }
 CapturedError.prototype = new Error("CapturedError");
-function InternalError(msg) { this.message = "Internal error: " + msg; console.log(this.message); }
+function InternalError(msg) { this.message = "Internal error: " + msg; }
 InternalError.prototype = new CapturedError("InternalError");
 function UsageError(msg) { this.message = "Usage error: " + msg; }
 UsageError.prototype = new CapturedError("UsageError");
-function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; console.log(this.message); }
+function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; }
 ;
 ProgramError.prototype = new CapturedError("ProgramError");
 var allSources = [];
 function main(args) {
-    //    try {
-    for (var _i = 0; _i < args.length; _i++) {
-        var input_file = args[_i];
-        if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
-            throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
-        var text = fs.readFileSync(input_file, "utf8");
-        var lines = text.split("\n");
-        var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
-        var output_file = input_file.replace(/\.flatjs$/, "");
-        allSources.push(new Source(input_file, output_file, defs, residual));
-    }
-    buildTypeMap();
-    resolveTypeRefs();
-    checkRecursion();
-    checkMethods();
-    layoutTypes();
-    createVirtuals();
-    expandSelfAccessors();
-    pasteupTypes();
-    expandGlobalAccessorsAndMacros();
-    for (var _b = 0; _b < allSources.length; _b++) {
-        var s = allSources[_b];
-        fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
-    }
-    /*
+    try {
+        for (var _i = 0; _i < args.length; _i++) {
+            var input_file = args[_i];
+            if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
+                throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
+            var text = fs.readFileSync(input_file, "utf8");
+            var lines = text.split("\n");
+            var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
+            var output_file = input_file.replace(/\.flatjs$/, "");
+            allSources.push(new Source(input_file, output_file, defs, residual));
         }
-        catch (e) {
+        buildTypeMap();
+        resolveTypeRefs();
+        checkRecursion();
+        checkMethods();
+        layoutTypes();
+        createVirtuals();
+        expandSelfAccessors();
+        pasteupTypes();
+        expandGlobalAccessorsAndMacros();
+        for (var _b = 0; _b < allSources.length; _b++) {
+            var s = allSources[_b];
+            fs.writeFileSync(s.output_file, s.allText(), "utf8");
+        }
+    }
+    catch (e) {
         console.log(e.message);
-        console.log(e);
-        }
-    */
+    }
 }
 var Ws = "\\s+";
 var Os = "\\s*";
@@ -526,7 +534,7 @@ function collectDefinitions(filename, lines) {
     while (i < lim) {
         var l = lines[i++];
         if (!start_re.test(l)) {
-            nlines.push(l);
+            nlines.push(new SourceLine(filename, i, l));
             continue;
         }
         var kind = "";
@@ -551,6 +559,7 @@ function collectDefinitions(filename, lines) {
         var mbody = null;
         var method_type = MethodKind.Virtual;
         var method_name = "";
+        var method_line = 0;
         var method_signature = null;
         // Do not check for duplicate names here since that needs to
         // take into account inheritance.
@@ -562,8 +571,9 @@ function collectDefinitions(filename, lines) {
                 if (kind != "class")
                     throw new ProgramError(filename, i, "@method is only allowed in classes");
                 if (in_method)
-                    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+                    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
                 in_method = true;
+                method_line = i;
                 method_type = (m[1] == "method" ? MethodKind.NonVirtual : MethodKind.Virtual);
                 method_name = m[2];
                 // Parse the signature.  Just use the param parser for now,
@@ -582,7 +592,8 @@ function collectDefinitions(filename, lines) {
                 if (kind != "struct")
                     throw new ProgramError(filename, i, "@" + m[1] + " is only allowed in structs");
                 if (in_method)
-                    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+                    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
+                method_line = i;
                 in_method = true;
                 switch (m[1]) {
                     case "get":
@@ -622,7 +633,7 @@ function collectDefinitions(filename, lines) {
                 throw new ProgramError(filename, i, "Syntax error: Not a property or method: " + l);
         }
         if (in_method)
-            methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+            methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
         if (kind == "class")
             defs.push(new ClassDefn(filename, lineno, name_1, inherit, properties, methods, nlines.length));
         else
@@ -1144,7 +1155,15 @@ function replaceSetterShorthand(file, line, s, p, ms, t) {
     return [(substitution_left + " " + rhs + ")" + (pp.sawSemi ? ';' : '') + " " + s.substring(pp.where)),
         substitution_left.length];
 }
+function linePusher(info, nlines) {
+    return function (text) {
+        var _a = info(), file = _a[0], line = _a[1];
+        nlines.push(new SourceLine(file, line, text));
+    };
+}
 function pasteupTypes() {
+    var emitFn = ""; // ES5 workaround - would otherwise be local to inner "for" loop
+    var emitLine = 0; // ditto
     for (var _i = 0; _i < allSources.length; _i++) {
         var source = allSources[_i];
         var defs = source.defs;
@@ -1155,14 +1174,17 @@ function pasteupTypes() {
             var d = defs[_a];
             while (k < d.origin && k < lines.length)
                 nlines.push(lines[k++]);
-            nlines.push("const " + d.name + " = {");
-            nlines.push("  NAME: \"" + d.name + "\",");
-            nlines.push("  SIZE: " + d.size + ",");
-            nlines.push("  ALIGN: " + d.align + ",");
+            var push = linePusher(function () { return [emitFn, emitLine++]; }, nlines);
+            emitFn = d.file + "[class definition]";
+            emitLine = d.line;
+            push("const " + d.name + " = {");
+            push("  NAME: \"" + d.name + "\",");
+            push("  SIZE: " + d.size + ",");
+            push("  ALIGN: " + d.align + ",");
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                nlines.push("  CLSID: " + cls.classId + ",");
-                nlines.push("  get BASE() { return " + (cls.baseName ? cls.baseName : "null") + "; },");
+                push("  CLSID: " + cls.classId + ",");
+                push("  get BASE() { return " + (cls.baseName ? cls.baseName : "null") + "; },");
             }
             // Now do methods.
             //
@@ -1185,6 +1207,8 @@ function pasteupTypes() {
                     ;
                 else
                     name_2 += "_impl";
+                emitFn = d.file + "[method " + name_2 + "]";
+                emitLine = m.line;
                 var body = m.body;
                 // Formatting: useful to strip all trailing blank lines from
                 // the body first.
@@ -1192,47 +1216,50 @@ function pasteupTypes() {
                 while (last > 0 && /^\s*$/.test(body[last]))
                     last--;
                 if (last == 0)
-                    nlines.push("  " + name_2 + " : function " + body[0]);
+                    push("  " + name_2 + " : function " + body[0]);
                 else {
-                    nlines.push("  " + name_2 + " : function " + body[0]);
+                    push("  " + name_2 + " : function " + body[0]);
                     for (var x = 1; x < last; x++)
-                        nlines.push(body[x]);
-                    nlines.push(body[last]);
+                        push(body[x]);
+                    push(body[last]);
                 }
-                nlines.push(","); // Gross hack, but if a comment is the last line of the body then necessary
+                push(","); // Gross hack, but if a comment is the last line of the body then necessary
             }
             // Now do vtable, if appropriate.
             if (d.kind == DefnKind.Class) {
                 var cls = d;
                 for (var _d = 0, _e = cls.vtable; _d < _e.length; _d++) {
                     var virtual = _e[_d];
+                    // Shouldn't matter much
+                    emitFn = d.file + "[vtable " + virtual.name + "]";
+                    emitLine = d.line;
                     var signature = virtual.signature();
-                    nlines.push(virtual.name + " : function (SELF " + signature + ") {");
-                    nlines.push("  switch (_mem_int32[SELF>>2]) {");
+                    push(virtual.name + " : function (SELF " + signature + ") {");
+                    push("  switch (_mem_int32[SELF>>2]) {");
                     var kv = virtual.reverseCases.keysValues();
                     for (var _f = kv.next(), name_3 = _f[0], cases = _f[1]; name_3; (_g = kv.next(), name_3 = _g[0], cases = _g[1], _g)) {
                         for (var _h = 0; _h < cases.length; _h++) {
                             var c = cases[_h];
-                            nlines.push("    case " + c + ":");
+                            push("    case " + c + ":");
                         }
-                        nlines.push("      return " + name_3 + "(SELF " + signature + ");");
+                        push("      return " + name_3 + "(SELF " + signature + ");");
                     }
-                    nlines.push("    default:");
-                    nlines.push("      " + (virtual.default_ ?
+                    push("    default:");
+                    push("      " + (virtual.default_ ?
                         "return " + virtual.default_ + "(SELF " + signature + ")" :
                         "throw FlatJS._badType(SELF)") + ";");
-                    nlines.push("  }");
-                    nlines.push("},");
+                    push("  }");
+                    push("},");
                 }
             }
             // Now do other methods: initInstance.
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                nlines.push("initInstance:function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; },");
+                push("initInstance:function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; },");
             }
-            nlines.push("}");
+            push("}");
             if (d.kind == DefnKind.Class)
-                nlines.push("FlatJS._idToType[" + d.classId + "] = " + d.name + ";");
+                push("FlatJS._idToType[" + d.classId + "] = " + d.name + ";");
         }
         while (k < lines.length)
             nlines.push(lines[k++]);
@@ -1245,18 +1272,16 @@ function expandGlobalAccessorsAndMacros() {
         var source = allSources[_i];
         var lines = source.lines;
         var nlines = [];
-        // FIXME: This is a bogus line number, because it is post-pasteup.
-        for (var j = 0; j < lines.length; j++)
-            nlines.push(expandMacrosIn(source.input_file, j + 1, lines[j]));
+        for (var _a = 0; _a < lines.length; _a++) {
+            var l = lines[_a];
+            nlines.push(new SourceLine(l.file, l.line, expandMacrosIn(l.file, l.line, l.text)));
+        }
         source.lines = nlines;
     }
 }
 // TODO: it's likely that the expandMacrosIn is really better
 // represented as a class, with a ton of methods and locals (eg for
 // file and line), performing expansion on one line.
-//const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(?:(set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)_)?([a-zA-Z0-9_]+)\s*\(/g;
-//const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
-//const new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
 var new_re = new RegExp("@new\\s+(" + Id + ")" + QualifierOpt + "(?:\\.(Array)" + LParen + ")?", "g");
 var acc_re = new RegExp("(" + Id + ")" + PathLazy + "(?:" + Operation + "|)" + LParen, "g");
 // It would sure be nice to avoid the explicit ".Array" here, but I don't yet know how.
@@ -1300,7 +1325,6 @@ var OpAttr = {
 };
 //    "at": { arity: 1, atomic: "", synchronic: "" }
 function accMacro(file, line, s, p, ms) {
-    //console.log(ms.join("  "));
     var m = ms[0];
     var className = ms[1];
     var propName = ms[2].substring(1); // Strip the leading "."

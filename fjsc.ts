@@ -395,26 +395,34 @@ class SSet {
     }
 }
 
+class SourceLine {
+    constructor(public file:string, public line:number, public text:string) {}
+}
+
 class Source {
-    constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public lines:string[]) {}
+    constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public lines:SourceLine[]) {}
+
+    allText(): string {
+	return this.lines.map(function (x) { return x.text }).join("\n");
+    }
 }
 
 function CapturedError(name) { this.name = name; }
 CapturedError.prototype = new Error("CapturedError");
 
-function InternalError(msg) { this.message = "Internal error: " + msg; console.log(this.message); }
+function InternalError(msg) { this.message = "Internal error: " + msg; }
 InternalError.prototype = new CapturedError("InternalError");
 
 function UsageError(msg) { this.message = "Usage error: " + msg; }
 UsageError.prototype = new CapturedError("UsageError");
 
-function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; console.log(this.message); };
+function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; };
 ProgramError.prototype = new CapturedError("ProgramError");
 
 const allSources:Source[] = [];
 
 function main(args: string[]):void {
-//    try {
+    try {
 	for ( let input_file of args ) {
 	    if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
 		throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
@@ -436,14 +444,12 @@ function main(args: string[]):void {
 	expandGlobalAccessorsAndMacros();
 
 	for ( let s of allSources )
-	    fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
-/*
+	    fs.writeFileSync(s.output_file, s.allText(), "utf8");
     }
     catch (e) {
 	console.log(e.message);
-	console.log(e);
+	//console.log(e);
     }
-*/
 }
 
 const Ws = "\\s+";
@@ -474,14 +480,14 @@ const blank_re = new RegExp("^" + Os + CommentOpt + "$");
 const space_re = new RegExp("^" + Os + "$");
 const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(" + Id + ")" + QualifierOpt + "(?:\.(Array))?" + Os + ";?" + CommentOpt + "$");
 
-function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string[]] {
+function collectDefinitions(filename:string, lines:string[]):[UserDefn[], SourceLine[]] {
     let defs:UserDefn[] = [];
-    let nlines:string[] = [];
+    let nlines:SourceLine[] = [];
     let i=0, lim=lines.length;
     while (i < lim) {
 	let l = lines[i++];
 	if (!start_re.test(l)) {
-	    nlines.push(l);
+	    nlines.push(new SourceLine(filename, i, l));
 	    continue;
 	}
 
@@ -508,6 +514,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	let mbody:string[] = null;
 	let method_type = MethodKind.Virtual;
 	let method_name = "";
+	let method_line = 0;
 	let method_signature:string[] = null;
 
 	// Do not check for duplicate names here since that needs to
@@ -521,8 +528,9 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		if (kind != "class")
 		    throw new ProgramError(filename, i, "@method is only allowed in classes");
 		if (in_method)
-		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+		    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
 		in_method = true;
+		method_line = i;
 		method_type = (m[1] == "method" ? MethodKind.NonVirtual : MethodKind.Virtual);
 		method_name = m[2];
 		// Parse the signature.  Just use the param parser for now,
@@ -541,7 +549,8 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		if (kind != "struct")
 		    throw new ProgramError(filename, i, `@${m[1]} is only allowed in structs`);
 		if (in_method)
-		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+		    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
+		method_line = i;
 		in_method = true;
 		switch (m[1]) {
 		case "get": method_type = MethodKind.Get; break;
@@ -573,7 +582,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		throw new ProgramError(filename, i, "Syntax error: Not a property or method: " + l);
 	}
 	if (in_method)
-	    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+	    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
 
 	if (kind == "class")
 	    defs.push(new ClassDefn(filename, lineno, name, inherit, properties, methods, nlines.length));
@@ -1124,23 +1133,37 @@ function replaceSetterShorthand(file:string, line:number, s:string, p:number, ms
 	    substitution_left.length];
 }
 
+function linePusher(info:() => [string,number], nlines:SourceLine[]): (string) => void {
+    return function (text:string):void {
+	let [file,line] = info();
+	nlines.push(new SourceLine(file, line, text));
+    }
+}
+
 function pasteupTypes():void {
+    var emitFn = "";		// ES5 workaround - would otherwise be local to inner "for" loop
+    var emitLine = 0;		// ditto
     for ( let source of allSources ) {
 	let defs = source.defs;
 	let lines = source.lines;
-	let nlines: string[] = [];
+	let nlines: SourceLine[] = [];
 	let k = 0;
 	for ( let d of defs ) {
 	    while (k < d.origin && k < lines.length)
 		nlines.push(lines[k++]);
-	    nlines.push("const " + d.name + " = {");
-	    nlines.push("  NAME: \"" + d.name + "\",");
-	    nlines.push("  SIZE: " + d.size + ",");
-	    nlines.push("  ALIGN: " + d.align + ",");
+
+	    let push = linePusher(function ():[string,number] { return [emitFn, emitLine++] }, nlines);
+
+	    emitFn = d.file + "[class definition]";
+	    emitLine = d.line;
+	    push("const " + d.name + " = {");
+	    push("  NAME: \"" + d.name + "\",");
+	    push("  SIZE: " + d.size + ",");
+	    push("  ALIGN: " + d.align + ",");
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
-		nlines.push("  CLSID: " + cls.classId + ",");
-		nlines.push("  get BASE() { return " + (cls.baseName ? cls.baseName : "null") + "; },");
+		push("  CLSID: " + cls.classId + ",");
+		push("  get BASE() { return " + (cls.baseName ? cls.baseName : "null") + "; },");
 	    }
 
 	    // Now do methods.
@@ -1160,6 +1183,8 @@ function pasteupTypes():void {
 		    ;
 		else
 		    name += "_impl";
+		emitFn = d.file + "[method " + name + "]";
+		emitLine = m.line;
 		let body = m.body;
 		// Formatting: useful to strip all trailing blank lines from
 		// the body first.
@@ -1167,14 +1192,14 @@ function pasteupTypes():void {
 		while (last > 0 && /^\s*$/.test(body[last]))
 		    last--;
 		if (last == 0)
-		    nlines.push("  " + name + " : function " + body[0]);
+		    push("  " + name + " : function " + body[0]);
 		else {
-		    nlines.push("  " + name + " : function " + body[0]);
+		    push("  " + name + " : function " + body[0]);
 		    for ( let x=1; x < last ; x++ )
-			nlines.push(body[x]);
-		    nlines.push(body[last]);
+			push(body[x]);
+		    push(body[last]);
 		}
-		nlines.push(","); // Gross hack, but if a comment is the last line of the body then necessary
+		push(","); // Gross hack, but if a comment is the last line of the body then necessary
 	    }
 
 	    // Now do vtable, if appropriate.
@@ -1182,21 +1207,24 @@ function pasteupTypes():void {
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
 		for ( let virtual of cls.vtable ) {
+		    // Shouldn't matter much
+		    emitFn = d.file + "[vtable " + virtual.name + "]";
+		    emitLine = d.line;
 		    let signature = virtual.signature();
-		    nlines.push(`${virtual.name} : function (SELF ${signature}) {`);
-		    nlines.push("  switch (_mem_int32[SELF>>2]) {");
+		    push(`${virtual.name} : function (SELF ${signature}) {`);
+		    push("  switch (_mem_int32[SELF>>2]) {");
 		    let kv = virtual.reverseCases.keysValues();
 		    for ( let [name,cases]=kv.next() ; name ; [name,cases]=kv.next() ) {
 			for ( let c of cases )
-			    nlines.push(`    case ${c}:`);
-			nlines.push(`      return ${name}(SELF ${signature});`);
+			    push(`    case ${c}:`);
+			push(`      return ${name}(SELF ${signature});`);
 		    }
-		    nlines.push("    default:");
-		    nlines.push("      " + (virtual.default_ ?
-					    `return ${virtual.default_}(SELF ${signature})` :
-					    "throw FlatJS._badType(SELF)") + ";");
-		    nlines.push("  }");
-		    nlines.push("},");
+		    push("    default:");
+		    push("      " + (virtual.default_ ?
+				     `return ${virtual.default_}(SELF ${signature})` :
+				     "throw FlatJS._badType(SELF)") + ";");
+		    push("  }");
+		    push("},");
 		}
 	    }
 
@@ -1204,12 +1232,12 @@ function pasteupTypes():void {
 
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
-		nlines.push("initInstance:function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; },");
+		push("initInstance:function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; },");
 	    }
 
-	    nlines.push("}");
+	    push("}");
 	    if (d.kind == DefnKind.Class)
-		nlines.push("FlatJS._idToType[" + (<ClassDefn> d).classId + "] = " + d.name + ";");
+		push("FlatJS._idToType[" + (<ClassDefn> d).classId + "] = " + d.name + ";");
 	}
 	while (k < lines.length)
 	    nlines.push(lines[k++]);
@@ -1220,10 +1248,9 @@ function pasteupTypes():void {
 function expandGlobalAccessorsAndMacros():void {
     for ( let source of allSources ) {
 	let lines = source.lines;
-	let nlines: string[] = [];
-	// FIXME: This is a bogus line number, because it is post-pasteup.
-	for ( let j=0 ; j < lines.length ; j++ )
-	    nlines.push(expandMacrosIn(source.input_file, j+1, lines[j]))
+	let nlines: SourceLine[] = [];
+	for ( let l of lines )
+	    nlines.push(new SourceLine(l.file, l.line, expandMacrosIn(l.file, l.line, l.text)));
 	source.lines = nlines;
     }
 }
@@ -1231,11 +1258,6 @@ function expandGlobalAccessorsAndMacros():void {
 // TODO: it's likely that the expandMacrosIn is really better
 // represented as a class, with a ton of methods and locals (eg for
 // file and line), performing expansion on one line.
-
-//const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(?:(set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)_)?([a-zA-Z0-9_]+)\s*\(/g;
-//const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
-//const new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
-
 
 const new_re = new RegExp("@new\\s+(" + Id + ")" + QualifierOpt + "(?:\\.(Array)" + LParen + ")?", "g");
 
@@ -1292,7 +1314,6 @@ const OpAttr = {
 //    "at": { arity: 1, atomic: "", synchronic: "" }
 
 function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
-    //console.log(ms.join("  "));
     let m = ms[0];
     let className = ms[1];
     let propName = ms[2].substring(1); // Strip the leading "."
