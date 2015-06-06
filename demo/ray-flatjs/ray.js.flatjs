@@ -59,12 +59,6 @@ function dot(a, b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
     @get(SELF) {
 	return DL3(SELF.x, SELF.y, SELF.z);
     }
-
-    @set(SELF, v) {
-	SELF.x = v.x;
-	SELF.y = v.y;
-	SELF.z = v.z;
-    }
 } @end
 
 // Avoid intermediate DL3 objects
@@ -79,22 +73,16 @@ function mulrefi(a, c) { return DL3(Vec3.x(a)*c, Vec3.y(a)*c, Vec3.z(a)*c); }
     shininess: float64
     ambient:   Vec3
     mirror:    float64
-
-    @set(SELF, m) {
-	SELF.diffuse = m.diffuse;
-	SELF.specular = m.specular;
-	SELF.shininess = m.shininess;
-	SELF.ambient = m.ambient;
-	SELF.mirror = m.mirror;
-    }
 } @end
 
-function MaterialV(diffuse, specular, shininess, ambient, mirror) {
-    this.diffuse = diffuse;
-    this.specular = specular;
-    this.shininess = shininess;
-    this.ambient = ambient;
-    this.mirror = mirror;
+function makeMaterial(diffuse, specular, shininess, ambient, mirror) {
+    var v = new Material;
+    v.diffuse = diffuse;
+    v.specular = specular;
+    v.shininess = shininess;
+    v.ambient = ambient;
+    v.mirror = mirror;
+    return v;
 }
 
 @flatjs class Surface {
@@ -331,14 +319,14 @@ function setStage() {
     if (debug)
 	PRINT("Setstage start");
 
-    const m1 = new MaterialV(DL3(0.1, 0.2, 0.2), DL3(0.3, 0.6, 0.6), 10, DL3(0.05, 0.1, 0.1), 0);
-    const m2 = new MaterialV(DL3(0.3, 0.3, 0.2), DL3(0.6, 0.6, 0.4), 10, DL3(0.1,0.1,0.05),   0);
-    const m3 = new MaterialV(DL3(0.1,  0,  0), DL3(0.8,0,0),     10, DL3(0.1,0,0),     0);
-    const m4 = new MaterialV(muli(darkGray,0.4), muli(darkGray,0.3), 100, muli(darkGray,0.3), 0.5);
-    const m5 = new MaterialV(muli(paleGreen,0.4), muli(paleGreen,0.4), 10, muli(paleGreen,0.2), 1.0);
-    const m6 = new MaterialV(muli(yellow,0.6), zzz, 0, muli(yellow,0.4), 0);
-    const m7 = new MaterialV(muli(red,0.6), zzz, 0, muli(red,0.4), 0);
-    const m8 = new MaterialV(muli(blue,0.6), zzz, 0, muli(blue,0.4), 0);
+    const m1 = makeMaterial(DL3(0.1, 0.2, 0.2), DL3(0.3, 0.6, 0.6), 10, DL3(0.05, 0.1, 0.1), 0);
+    const m2 = makeMaterial(DL3(0.3, 0.3, 0.2), DL3(0.6, 0.6, 0.4), 10, DL3(0.1,0.1,0.05),   0);
+    const m3 = makeMaterial(DL3(0.1,  0,  0), DL3(0.8,0,0),     10, DL3(0.1,0,0),     0);
+    const m4 = makeMaterial(muli(darkGray,0.4), muli(darkGray,0.3), 100, muli(darkGray,0.3), 0.5);
+    const m5 = makeMaterial(muli(paleGreen,0.4), muli(paleGreen,0.4), 10, muli(paleGreen,0.2), 1.0);
+    const m6 = makeMaterial(muli(yellow,0.6), zzz, 0, muli(yellow,0.4), 0);
+    const m7 = makeMaterial(muli(red,0.6), zzz, 0, muli(red,0.4), 0);
+    const m8 = makeMaterial(muli(blue,0.6), zzz, 0, muli(blue,0.4), 0);
 
     var world = [];
 

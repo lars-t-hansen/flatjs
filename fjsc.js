@@ -1177,29 +1177,47 @@ function pasteupTypes() {
             var push = linePusher(function () { return [emitFn, emitLine++]; }, nlines);
             emitFn = d.file + "[class definition]";
             emitLine = d.line;
-            push("const " + d.name + " = {");
-            push("  NAME: \"" + d.name + "\",");
-            push("  SIZE: " + d.size + ",");
-            push("  ALIGN: " + d.align + ",");
+            if (d.kind == DefnKind.Class)
+                push("function " + d.name + "(p) { this._pointer = (p|0); }");
+            else
+                push("function " + d.name + "() {}");
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                push("  CLSID: " + cls.classId + ",");
-                push("  get BASE() { return " + (cls.baseName ? cls.baseName : "null") + "; },");
+                if (cls.baseName)
+                    push(d.name + ".prototype = new " + cls.baseName + ";");
+                else
+                    push("Object.defineProperty(" + d.name + ".prototype, 'pointer', { get: function () { return this._pointer } });");
+            }
+            push(d.name + ".NAME = \"" + d.name + "\";");
+            push(d.name + ".SIZE = " + d.size + ";");
+            push(d.name + ".ALIGN = " + d.align + ";");
+            if (d.kind == DefnKind.Class) {
+                var cls = d;
+                push(d.name + ".CLSID = " + cls.classId + ";");
+                push("Object.defineProperty(" + d.name + ", 'BASE', {get: function () { return " + (cls.baseName ? cls.baseName : "null") + "; }});");
             }
             // Now do methods.
             //
             // Implementation methods are emitted directly in the defining type, with a name suffix _impl.
             // For struct methods, the name is "_get_impl", "_set_impl", or "_copy_impl".
+            var haveSetter = false;
+            var haveGetter = false;
             for (var _b = 0, _c = d.methods; _b < _c.length; _b++) {
                 var m = _c[_b];
                 var name_2 = m.name;
                 if (name_2 == "") {
                     switch (m.kind) {
                         case MethodKind.Get:
+                            if (haveGetter)
+                                throw new ProgramError(d.file, m.line, "Duplicate struct getter");
                             name_2 = "_get_impl";
+                            haveGetter = true;
                             break;
                         case MethodKind.Set:
+                            if (haveSetter)
+                                throw new ProgramError(d.file, m.line, "Duplicate struct setter");
                             name_2 = "_set_impl";
+                            haveSetter = true;
                             break;
                     }
                 }
@@ -1216,30 +1234,56 @@ function pasteupTypes() {
                 while (last > 0 && /^\s*$/.test(body[last]))
                     last--;
                 if (last == 0)
-                    push("  " + name_2 + " : function " + body[0]);
+                    push(d.name + "." + name_2 + " = function " + body[0]);
                 else {
-                    push("  " + name_2 + " : function " + body[0]);
+                    push(d.name + "." + name_2 + " = function " + body[0]);
                     for (var x = 1; x < last; x++)
                         push(body[x]);
                     push(body[last]);
                 }
-                push(","); // Gross hack, but if a comment is the last line of the body then necessary
+            }
+            // Now default methods, if appropriate.
+            if (d.kind == DefnKind.Struct) {
+                var struct = d;
+                if (!haveGetter) {
+                    push(d.name + "._get_impl = function (SELF) {");
+                    push("  var v = new " + d.name + ";");
+                    // Use longhand for access, since self accessors are expanded before pasteup.
+                    // FIXME: Would be useful to fix that.
+                    for (var _d = 0, _e = d.props; _d < _e.length; _d++) {
+                        var p = _e[_d];
+                        push("  v." + p.name + " = " + d.name + "." + p.name + "(SELF);");
+                    }
+                    push("  return v;");
+                    push("}");
+                    struct.hasGetMethod = true;
+                }
+                if (!haveSetter) {
+                    push(d.name + "._set_impl = function (SELF, v) {");
+                    // FIXME: as above.
+                    for (var _f = 0, _g = d.props; _f < _g.length; _f++) {
+                        var p = _g[_f];
+                        push("  " + d.name + "." + p.name + ".set(SELF, v." + p.name + ");");
+                    }
+                    push("}");
+                    struct.hasSetMethod = true;
+                }
             }
             // Now do vtable, if appropriate.
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                for (var _d = 0, _e = cls.vtable; _d < _e.length; _d++) {
-                    var virtual = _e[_d];
+                for (var _h = 0, _j = cls.vtable; _h < _j.length; _h++) {
+                    var virtual = _j[_h];
                     // Shouldn't matter much
                     emitFn = d.file + "[vtable " + virtual.name + "]";
                     emitLine = d.line;
                     var signature = virtual.signature();
-                    push(virtual.name + " : function (SELF " + signature + ") {");
+                    push(d.name + "." + virtual.name + " = function (SELF " + signature + ") {");
                     push("  switch (_mem_int32[SELF>>2]) {");
                     var kv = virtual.reverseCases.keysValues();
-                    for (var _f = kv.next(), name_3 = _f[0], cases = _f[1]; name_3; (_g = kv.next(), name_3 = _g[0], cases = _g[1], _g)) {
-                        for (var _h = 0; _h < cases.length; _h++) {
-                            var c = cases[_h];
+                    for (var _k = kv.next(), name_3 = _k[0], cases = _k[1]; name_3; (_l = kv.next(), name_3 = _l[0], cases = _l[1], _l)) {
+                        for (var _m = 0; _m < cases.length; _m++) {
+                            var c = cases[_m];
                             push("    case " + c + ":");
                         }
                         push("      return " + name_3 + "(SELF " + signature + ");");
@@ -1249,15 +1293,14 @@ function pasteupTypes() {
                         "return " + virtual.default_ + "(SELF " + signature + ")" :
                         "throw FlatJS._badType(SELF)") + ";");
                     push("  }");
-                    push("},");
+                    push("}");
                 }
             }
             // Now do other methods: initInstance.
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                push("initInstance:function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; },");
+                push(d.name + ".initInstance = function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; }");
             }
-            push("}");
             if (d.kind == DefnKind.Class)
                 push("FlatJS._idToType[" + d.classId + "] = " + d.name + ";");
         }
@@ -1265,7 +1308,7 @@ function pasteupTypes() {
             nlines.push(lines[k++]);
         source.lines = nlines;
     }
-    var _g;
+    var _l;
 }
 function expandGlobalAccessorsAndMacros() {
     for (var _i = 0; _i < allSources.length; _i++) {

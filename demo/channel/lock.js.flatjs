@@ -4,7 +4,7 @@
 
 @flatjs struct Lock {
     // Clearly "private" is desirable
-    lock: synchronic int32
+    lock: int32.synchronic
 
     @method init(SELF) {
 	SELF.lock = 0;
@@ -12,8 +12,8 @@
     }
 
     @method acquire(SELF) {
-	while (SELF.compareExchange_lock(0, 1) != 0)
-	    SELF.expectUpdate_lock(1, Number.POSITIVE_INFINITY);
+	while (SELF.lock.compareExchange(0, 1) != 0)
+	    SELF.lock.expectUpdate(1, Number.POSITIVE_INFINITY);
     }
 
     @method release(SELF) {

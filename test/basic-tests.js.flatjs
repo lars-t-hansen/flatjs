@@ -41,15 +41,23 @@ var glob = 0;
     }
 } @end
 
+assertEq(typeof Point, "function");
+assertEq((new Point) instanceof Point, true);
+
 assertEq(Point.NAME, "Point");
 assertEq(Point.SIZE, 12);	         // White-box, it could be larger
 assertEq(Point.ALIGN, 4);	         // White-box, it could be larger
+assertEq(typeof Point.CLSID, "number");
+assertEq(Point.BASE, null);
 
 var p = @new Point;
 Point.x.set(p, 10);
 Point.y.set(p, 20);
 assertEq(Point.x(p), 10);
 assertEq(Point.y(p), 20);
+
+var po = new Point(p);
+assertEq(po.pointer, p);
 
 assertEq(FlatJS.identify(p), Point);
 assertEq(Point.CLSID, _mem_int32[p>>2]); // White-box, layout
@@ -86,12 +94,21 @@ assertEq(glob, 86);
     }
 } @end
 
+assertEq(Point3D.NAME, "Point3D");
+
+assertEq(typeof Point3D, "function");
+assertEq((new Point3D) instanceof Point3D, true);
+assertEq((new Point3D) instanceof Point, true);
+
 var q = Point3D.init(@new Point3D, 5, 7, 8);
 assertEq(Point.x(q), 5);
 assertEq(Point.y(q), 7);
 assertEq(Point3D.x(q), 5);
 assertEq(Point3D.y(q), 7);
 assertEq(Point3D.z(q), 8);
+
+var qo = new Point3D(q);
+assertEq(qo.pointer, q);
 
 // Virtual calls
 
@@ -125,6 +142,10 @@ assertEq(Point3D.BASE, Point);
 
 assertEq(Pair.SIZE, 16);
 assertEq(Pair.ALIGN, 8);	// White-box, it could be larger
+assertEq(Pair.NAME, "Pair");
+
+assertEq(typeof Pair, "function");
+assertEq((new Pair) instanceof Pair, true);
 
 // Structure fields within classes
 
@@ -191,5 +212,21 @@ Pair.Array.x.setAt(pa, i, "37\"42");
 @flatjs class WithArray {
     xs : int32.Array
 } @end
+
+// Default getter and setter
+
+@flatjs struct Pair2 {
+    x:float64;
+    y:int32;
+} @end
+
+@flatjs class Pair2Box {
+    p: Pair2;
+} @end
+
+var p2 = @new Pair2Box;
+Pair2Box.p.set(p2, { x:-1.5, y:37} );
+assertEq(Pair2Box.p(p2).x, -1.5);
+assertEq(Pair2Box.p(p2).y, 37);
 
 print("Done");

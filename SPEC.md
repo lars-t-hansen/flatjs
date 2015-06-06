@@ -6,23 +6,25 @@ FlatJS is a "language fragment" layered on JavaScript (and JS dialects)
 that allows programs to use flat memory (ArrayBuffer and SharedArrayBuffer)
 conveniently with good performance.
 
-FlatJS provides structs, classes, and arrays within flat memory, as well
-as atomic and synchronic fields when using shared memory.  There is also
-some support for SIMD values.  Objects in flat memory are manually
-managed and represented in JavaScript as pointers into the shared
-memory (ie, integer addresses), not as native JavaScript objects.
-Virtual methods are provided for on class instances.
+FlatJS provides structs, classes, and arrays within flat memory, as
+well as atomic and synchronic fields when using shared memory.  There
+is support for SIMD values.  Objects in flat memory are manually
+managed and normally represented in JavaScript as pointers into the
+shared memory (ie, integer addresses), not as native JavaScript
+objects.  Virtual methods are provided for on class instances.
 
-FlatJS is a fairly static language and is implemented as a preprocessor
-that translates  JavaScript+FlatJS into plain JavaScript.
+FlatJS is a static language and is implemented as a preprocessor that
+translates JavaScript+FlatJS into plain JavaScript.
 
-The following is the bare specification.  Full programs are in test/
-and demo/.
+A slightly more dynamic layer sits on top of the static layer,
+allowing objects in flat memory to be exposed as JavaScript classes
+within a single JavaScript context.
+
 
 ## Caveats
 
 For ease of processing *only*, the syntax is currently line-oriented:
-Line breaks are explicit in the grammars below and some "@" characters
+Line breaks are explicit in the grammars below and some ```@``` characters
 appear here and there to make recognition easier.  Please don't get
 hung up on this, it's mostly a matter of programming to fix it but that
 is not my focus right now.
@@ -42,16 +44,17 @@ out for:
   it can't insert parentheses blindly as that interacts badly with
   automatic semicolon insertion (yay JavaScript).
 
-
 Failures to obey these rules will sometimes lead to mysterious parsing
 and runtime errors.  A look at the generated code is usually enough to
 figure out what's going on; problems tend to be local.
+
 
 ## Programs
 
 A program comprises a set of files that are processed together by the FlatJS
 compiler.  In a Web context, all the files loaded into a tab, or all the files
 loaded into a worker, would normally be processed together.
+
 
 ## Types
 
@@ -66,6 +69,7 @@ order and in any file of the program.
 Within the bodies of methods, 'this' has an undetermined binding (for now)
 and should not be referenced.
 
+
 ## Primitive types
 
 There are predefined global type objects with the following names: *int8*, *uint8*,
@@ -77,6 +81,7 @@ Each predefined type object has three properties:
 * NAME is the name of the type (a string)
 * SIZE is the size in bytes of the type
 * ALIGN is the required alignment for the type
+
 
 ## Struct types
 
@@ -144,7 +149,8 @@ the memory.
 
 #### Global value properties
 
-R is a global "const" holding an object designating the type.
+R is a global variable holding a function object designating the type.
+See "JavaScript front objects", later.
 
 R.SIZE is the size in bytes of R, rounded up such that an array of R
 structures can be traversed by adding R.SIZE to a pointer to one
@@ -193,12 +199,18 @@ In addition, the following synchronic functions are defined:
 If a field Fk has a struct type T with fields G1 .. Gm then the
 following functions are defined:
 
-* R.Fk(self) => if T does not have a @get method then this is undefined.
-  Otherwise, a function that invokes the @get method on a reference to self.Fk.
-* R.Fk.set(self, ...args) => if T does not have a @set method then this
-  is undefined.  Otherwise, a function that invokes the @set method on a
-  reference to self.Fk and ...args
-* R.Fk.ref(self) => A reference to self.FK.
+* R.Fk(self) is a function that reifies the structure as a JavaScript object.
+  If T does not have a ```@get``` method then this method returns a new instance
+  of the JavaScript type R, with properties whose values are the values
+  extracted from the flat object, with standard getters.  If T does have
+  a ```@get``` method then R.Fk(self) invokes that method on SELF.Fk.ref and returns its
+  result.
+* R.Fk.set(self, value) is a function that updates the shared object from ```value```.
+  If T does not have a ```@set``` method then this method will set each field
+  of self.Fk in order from same-named properties extracted from ```value```.
+  If T does have a ```@set``` method then this method will invoke that method
+  on SELF.Fk.ref and ```value```.
+* R.Fk.ref(self) => A reference to self.Fk.
 * Getters, setters, and accessors for fields G1 through Gm within Fk,
   with the general pattern R.Fk.Gi(self) and R.Fk.Gi.op(self,...), by
   the rules above.
@@ -284,7 +296,8 @@ the memory.
 
 #### Global value properties
 
-C is a global "const" holding an object designating the type.
+C is a global variable holding a function object designating the type.
+See "JavaScript front objects", later.
 
 C.SIZE is the size in bytes of C.  Note that since C is a reference
 type, to allocate an "array of C" means to allocate an array of
@@ -297,6 +310,10 @@ C.NAME is the name of the type C.
 C.CLSID for the type ID for the type.
 
 C.BASE for the base type of R, or null.
+
+C.prototype is an instance of the function object designating the base
+type, if there is a base type, otherwise an Object.
+
 
 #### Global function properties
 
@@ -357,7 +374,7 @@ Suppose A is some type.
 NOTE: Arrays of atomics and synchronics, and operations on those, will appear.
 
 
-## @new macro
+## ```@new``` macro
 
 An instance of the class type may be allocated and initialized with
 the operator-like ```@new``` macro.  Specifically, ```@new T``` for FlatJS class
@@ -406,13 +423,65 @@ Furthermore, if there exists a method Mg and the syntax that is being
 used is SELF.Mg(arg, ...) then this is rewritten as T.Mg(SELF,arg,...).
 
 
-
 ## Global macros
 
 All field accessors to simple fields are macro-expanded at translation time.
 
 Note carefully that the field accessors that are macro-expanded are not,
 in fact, available as properties on the type objects at run-time.
+
+
+## JavaScript front objects
+
+The objects that describe FlatJS types are also JavaScript functions,
+that is, standard JS class types.
+
+These JS types are used in situations where JavaScript objects act as
+front objects or proxies for flat objects, as described next.
+
+Going via the front objects will generally be slower than going
+directly to the flat objects, but provide a better interface to
+JavaScript programs.
+
+
+### Struct front objects
+
+If a struct descriptor object is invoked as a function, it does
+nothing and returns nothing.  If it is invoked as a constructor, it
+returns a completely empty JavaScript object of that JS type.
+
+The default struct getter will return a JavaScript object that is an
+instance of the struct's descriptor object, with fields named by the
+fields of the struct, and field values extracted from the struct.  The
+JS object does not reference the shared struct in any way.
+
+### Class front objects
+
+If a class descriptor object is invoked as a function, it does nothing
+and returns nothing.  If it is invoked as a constructor, it should be
+passed one argument (defaults to NULL), which must be a pointer to a
+shared object of the type denoted by the descriptor or one of its
+subtypes.
+
+The JS front object for a class has a getter called ```pointer``` that
+extracts the pointer stored in the object.  There are no other
+prototype methods, and there are no restrictions on what methods can
+be stored in the prototype.
+
+NOTE: It may be that we want to automatically create proxy methods on
+the prototype for (some) shared object methods and fields.
+
+NOTE: As the constructor for the front object already has a
+definition, any construction protocols for them that pass additional
+arguments will have to be implemented via a static constructor.  This
+is a weakness of the system.  (It's fixable, and may be fixed.)
+
+The front object for a FlatJS class normally holds no values of its
+own except the pointer to the shared object.
+
+If there is a FlatJS class D that has a base class B, then the D
+function's prototype property holds an empty instance of B, that is,
+the "instanceof" operator will function correctly on front objects.
 
 
 ## Environment
