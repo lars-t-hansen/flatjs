@@ -449,6 +449,7 @@ function main(args: string[]):void {
     catch (e) {
 	console.log(e.message);
 	//console.log(e);
+	process.exit(1);
     }
 }
 
@@ -1483,7 +1484,7 @@ function loadFromRef(file:string, line:number,
 		expr = `FlatJS.${OpAttr[operation].synchronic}(${ref}, ${mem}, ${fieldIndex}, ${rhs}, ${rhs2})`;
 	    break;
 	default:
-	    throw new InternalError("No operator: " + operation + " " + s);
+	    throw new InternalError("No operator: " + operation + " line: " + s);
 	}
 	// Issue #16: Parens interact with semicolon insertion.
 	//expr = `(${expr})`;
@@ -1503,6 +1504,9 @@ function loadFromRef(file:string, line:number,
 	case "set":
 	    if (t.hasSetMethod)
 		expr = `${t.name}._set_impl(${ref}, ${expandMacrosIn(file, line, endstrip(rhs))})`;
+	    break;
+	case "ref":
+	    expr = ref;
 	    break;
 	}
 	if (expr == "") {
@@ -1561,6 +1565,11 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
 	// Issue #16: Watch it: Parens interact with semicolon insertion.
 	ref = "(" + ref + "+" + fld.offset + ")";
 	type = fld.type;
+    }
+    if (operation == "ref") {
+	let left = s.substring(0,p);
+	return [left + ref + s.substring(pp.where),
+		left.length + ref.length];
     }
 
     return loadFromRef(file, line, ref, type, s, s.substring(0,p), operation, pp, as[2], as[3], nomatch);
