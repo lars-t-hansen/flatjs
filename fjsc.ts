@@ -461,7 +461,7 @@ const Rbrace = Os + "\\}";
 const LParen = Os + "\\(";
 const CommentOpt = Os + "(?:\\/\\/.*)?";
 const QualifierOpt = "(?:\\.(atomic|synchronic))?"
-const OpNames = "at|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
+const OpNames = "at|get|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
 const Operation = "(?:\\.(" + OpNames + "))";
 const OperationOpt = Operation + "?";
 const OperationLParen = "(?:\\.(" + OpNames + ")" + LParen + ")";
@@ -469,6 +469,7 @@ const NullaryOperation = "(?:\\.(ref|notify))";
 const Path = "((?:\\." + Id + ")+)";
 const PathLazy = "((?:\\." + Id + ")+?)";
 const PathOpt = "((?:\\." + Id + ")*)";
+const PathOptLazy = "((?:\\." + Id + ")*?)";
 const AssignOp = "(=|\\+=|-=|&=|\\|=|\\^=)(?!=)";
 
 const start_re = new RegExp("^" + Os + "@flatjs" + Ws + "(?:struct|class)" + Ws + "(?:" + Id + ")");
@@ -1308,7 +1309,7 @@ function expandGlobalAccessorsAndMacros():void {
 
 const new_re = new RegExp("@new\\s+(" + Id + ")" + QualifierOpt + "(?:\\.(Array)" + LParen + ")?", "g");
 
-const acc_re = new RegExp("(" + Id + ")" + PathLazy + "(?:" + Operation + "|)" + LParen, "g");
+const acc_re = new RegExp("(" + Id + ")" + PathOptLazy + "(?:" + Operation + "|)" + LParen, "g");
 
 // It would sure be nice to avoid the explicit ".Array" here, but I don't yet know how.
 const arr_re = new RegExp("(" + Id + ")" + QualifierOpt + "\\.Array" + PathOpt + Operation + LParen, "g");
@@ -1363,26 +1364,50 @@ const OpAttr = {
 function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m = ms[0];
     let className = ms[1];
-    let propName = ms[2].substring(1); // Strip the leading "."
-    let operation = ms[3] ? ms[3] : "get";
+    let propName = "";
+    let operation = "";
 
     let nomatch:[string,number] = [s, p+m.length];
     let left = s.substring(0,p);
 
+    if (!ms[2] && !ms[3])
+	return nomatch;		// We're looking at something else
+
+    propName = ms[2] ? ms[2].substring(1) : ""; // Strip the leading "."
+    operation = ms[3] ? ms[3] : "get";
+
     let ty = knownTypes.get(className);
-    if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
+    if (!ty)
 	return nomatch;
-    let cls = <UserDefn> ty;
 
-    // findAccessibleFieldFor will vet the operation against the field type,
-    // so atomic/synchronic ops will only be allowed on appropriate types
+    let offset = 0;
+    let targetType: Defn = null;
 
-    let fld = cls.findAccessibleFieldFor(operation, propName);
-    if (!fld) {
-	let fld2 = cls.findAccessibleFieldFor("get", propName);
-	if (fld2)
-	    warning(file, line, "No match for " + className + "  " + operation + "  " + propName);
-	return nomatch;
+    if (propName == "") {
+	if (!(ty.kind == DefnKind.Primitive || ty.kind == DefnKind.Struct))
+	    throw new ProgramError(file, line, "Operation '" + operation + "' without a path requires a value type: " + s);
+	offset = 0;
+	targetType = ty;
+    }
+    else {
+	if (!(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct)) {
+	    //throw new ProgramError(file, line, "Operation with a path requires a structured type: " + s);
+	    return nomatch;
+	}
+
+	let cls = <UserDefn> ty;
+	// findAccessibleFieldFor will vet the operation against the field type,
+	// so atomic/synchronic ops will only be allowed on appropriate types
+
+	let fld = cls.findAccessibleFieldFor(operation, propName);
+	if (!fld) {
+	    let fld2 = cls.findAccessibleFieldFor("get", propName);
+	    if (fld2)
+		warning(file, line, "No match for " + className + "  " + operation + "  " + propName);
+	    return nomatch;
+	}
+	offset = fld.offset;
+	targetType = fld.type;
     }
 
     let pp = new ParamParser(file, line, s, p+m.length);
@@ -1393,13 +1418,13 @@ function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     };
 
     // Issue #16: Watch it: Parens interact with semicolon insertion.
-    let ref = `(${expandMacrosIn(file, line, endstrip(as[0]))} + ${fld.offset})`;
+    let ref = `(${expandMacrosIn(file, line, endstrip(as[0]))} + ${offset})`;
     if (operation == "ref") {
 	return [left + ref + s.substring(pp.where),
 		left.length + ref.length];
     }
 
-    return loadFromRef(file, line, ref, fld.type, s, left, operation, pp, as[1], as[2], nomatch);
+    return loadFromRef(file, line, ref, targetType, s, left, operation, pp, as[1], as[2], nomatch);
 }
 
 function loadFromRef(file:string, line:number,
@@ -1593,13 +1618,12 @@ function newMacro(file, line, s:string, p:number, ms:RegExpExecArray):[string,nu
 	throw new ProgramError(file, line, "Unknown type argument to @new: " + baseType);
 
     if (!isArray) {
-	// FIXME - lift this restriction for primitives and structs
-	if (t.kind != DefnKind.Class)
-	    throw new ProgramError(file, line, "Cannot instantiate value types directly (yet)");
-
-	// NOTE, parens removed here
-	// Issue #16: Watch it: Parens interact with semicolon insertion.
-	let expr = baseType + ".initInstance(FlatJS.allocOrThrow(" + t.size + "," + t.align + "))";
+	let expr = "FlatJS.allocOrThrow(" + t.size + "," + t.align + ")";
+	if (t.kind == DefnKind.Class) {
+	    // NOTE, parens removed here
+	    // Issue #16: Watch it: Parens interact with semicolon insertion.
+	    expr = baseType + ".initInstance(" + expr + ")";
+	}
 	return [left + expr + s.substring(p + m.length),
 		left.length + expr.length ];
     }

@@ -235,4 +235,15 @@ Pair2Box.p.set(p2, { x:-1.5, y:37} );
 assertEq(Pair2Box.p(p2).x, -1.5);
 assertEq(Pair2Box.p(p2).y, 37);
 
+// Alloc primitive types
+
+var ip = @new int32;
+int32.set(ip,12);
+assertEq(int32.get(ip), 12);
+
+var p2p = @new Pair2;
+Pair2.set(p2p, {x:-2.2, y:42});
+assertEq(Pair2.get(p2p).x, -2.2);
+assertEq(Pair2.get(p2p).y, 42);
+
 print("Done");

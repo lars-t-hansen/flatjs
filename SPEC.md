@@ -34,7 +34,9 @@ matchers and an unforgiving, context-insensitive, nonhygienic macro
 expander.  Occasionally this leads to problems.  Some things to watch
 out for:
 
-* Do not use expressions containing strings, comments, or regular expressions
+* Treat all operation names (get, set, at, setAt, ref, add, etc, see below)
+  as reserved words - do not name your fields with those identifiers.
+* Do not use expressions containing template strings or regular expressions
   in the arguments to accessor macros (including array accessors).
 * Do not split calls to accessors across multiple source lines, because
   frequently the translator must scan for the end of the call
@@ -42,11 +44,14 @@ out for:
   on the same line as the assignment operator.
 * Occasionally, the translator fails to parenthesize code correctly because
   it can't insert parentheses blindly as that interacts badly with
-  automatic semicolon insertion (yay JavaScript).
+  automatic semicolon insertion (yay JavaScript).  When in doubt, use
+  semicolons.
 
 Failures to obey these rules will sometimes lead to mysterious parsing
 and runtime errors.  A look at the generated code is usually enough to
 figure out what's going on; problems tend to be local.
+
+It's a goal to make the macro substitution more reliable.
 
 
 ## Programs
@@ -76,12 +81,13 @@ There are predefined global type objects with the following names: *int8*, *uint
 *int16*, *uint16*, *int32*, *uint32*, *float32*, *float64*, *int32x4*,
 *float32x4*, and *float64x2*.
 
-Each predefined type object has three properties:
+Each predefined type object T has five properties:
 
-* NAME is the name of the type (a string)
-* SIZE is the size in bytes of the type
-* ALIGN is the required alignment for the type
-
+* T.NAME is the name of the type (a string)
+* T.SIZE is the size in bytes of the type
+* T.ALIGN is the required alignment for the type
+* T.get(self) => value of a cell of the type
+* T.set(self, v) => set the value of a cell of the type
 
 ## Struct types
 
@@ -164,11 +170,28 @@ R.NAME is the name of the type R.
 
 #### Global function properties
 
-If a field Fk does not have struct type then the following functions
-are defined:
+Whole-type accessors:
 
-* R.Fk(self) => value of self.Fk field
-* R.Fk.set(self, v) => void; set value of self.Fk field to v
+* R.get(self) => reified value of the structure, 
+* R.set(self, v) => set the value of the structure from a reified value
+
+Field accessors for all field types:
+
+* R.Fk(self) => Shorthand for R.fk.get(self)
+* R.Fk.get(self) => value of self.Fk field
+  If the field is a structure then the getter reifies the structure as a JavaScript object.
+  If the field type T does not have a ```@get``` method then the getter returns a new instance
+  of the JavaScript type R, with properties whose values are the values
+  extracted from the flat object, with standard getters.  If T does have
+  a ```@get``` method then R.Fk(self) invokes that method on SELF.Fk.ref and returns its
+  result.
+* R.Fk.set(self, v) => void; set value of self.Fk field to v.
+  If the field is a structure then the setter is a function that updates the shared object from ```v```.
+  If the field type T does not have a ```@set``` method then this method will set each field
+  of self.Fk in order from same-named properties extracted from ```value```.
+  If T does have a ```@set``` method then this method will invoke that method
+  on SELF.Fk.ref and ```value```.
+* R.Fk.ref(self, v) => reference to the self.Fk field
 
 If a field Fk is designated "atomic" then the getter and setter just
 shown use atomic loads and stores.  In addition, the following atomic
@@ -199,18 +222,6 @@ In addition, the following synchronic functions are defined:
 If a field Fk has a struct type T with fields G1 .. Gm then the
 following functions are defined:
 
-* R.Fk(self) is a function that reifies the structure as a JavaScript object.
-  If T does not have a ```@get``` method then this method returns a new instance
-  of the JavaScript type R, with properties whose values are the values
-  extracted from the flat object, with standard getters.  If T does have
-  a ```@get``` method then R.Fk(self) invokes that method on SELF.Fk.ref and returns its
-  result.
-* R.Fk.set(self, value) is a function that updates the shared object from ```value```.
-  If T does not have a ```@set``` method then this method will set each field
-  of self.Fk in order from same-named properties extracted from ```value```.
-  If T does have a ```@set``` method then this method will invoke that method
-  on SELF.Fk.ref and ```value```.
-* R.Fk.ref(self) => A reference to self.Fk.
 * Getters, setters, and accessors for fields G1 through Gm within Fk,
   with the general pattern R.Fk.Gi(self) and R.Fk.Gi.op(self,...), by
   the rules above.
@@ -314,6 +325,9 @@ C.BASE for the base type of R, or null.
 C.prototype is an instance of the function object designating the base
 type, if there is a base type, otherwise an Object.
 
+NOTE, C.get() and C.set() are not defined, those are defined only on
+value types.
+
 
 #### Global function properties
 
@@ -366,6 +380,7 @@ Suppose A is some type.
   whose base address is ptr.  Not bounds checked.  If the base
   type of the array is a structure type this will only work if
   the type has an ```@set``` method.
+* A.Array.ref(ptr, i) returns a reference to the ith element.
 * If the base type A is a structure type then the path to a field
   within the structure can be denoted: A.Array.x.y.at(ptr, i)
   returns the x.y field of the ith element of the array ptr.
@@ -382,6 +397,7 @@ type T expands into this:
 ```
   T.initInstance(FlatJS.allocOrThrow(T.SIZE, T.ALIGN))
 ```
+
 An array may also be allocated and initialized with ```@new```.
 Specifically, ```@new T.Array(n)``` for type T expands into
 this:
@@ -391,6 +407,14 @@ this:
 where *size* is int32.SIZE if T is a reference type or T.SIZE
 otherwise, and *align* is int32.ALIGN if T is a reference type
 and T.ALIGN otherwise.
+
+Value types may be allocated with ```@new```, and are
+default-initialized (all zero bits).  ```@new int32``` and ```@new T``` for
+some struct type T expand to this code:
+```
+   FlatJS.allocOrThrow(int32.SIZE, int32.ALIGN)
+   FlatJS.allocOrThrow(T.SIZE, T.ALIGN);
+```
 
 NOTE: Arrays of atomics and synchronics, and operations on those, will appear.
 

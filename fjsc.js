@@ -511,7 +511,7 @@ var Rbrace = Os + "\\}";
 var LParen = Os + "\\(";
 var CommentOpt = Os + "(?:\\/\\/.*)?";
 var QualifierOpt = "(?:\\.(atomic|synchronic))?";
-var OpNames = "at|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
+var OpNames = "at|get|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
 var Operation = "(?:\\.(" + OpNames + "))";
 var OperationOpt = Operation + "?";
 var OperationLParen = "(?:\\.(" + OpNames + ")" + LParen + ")";
@@ -519,6 +519,7 @@ var NullaryOperation = "(?:\\.(ref|notify))";
 var Path = "((?:\\." + Id + ")+)";
 var PathLazy = "((?:\\." + Id + ")+?)";
 var PathOpt = "((?:\\." + Id + ")*)";
+var PathOptLazy = "((?:\\." + Id + ")*?)";
 var AssignOp = "(=|\\+=|-=|&=|\\|=|\\^=)(?!=)";
 var start_re = new RegExp("^" + Os + "@flatjs" + Ws + "(?:struct|class)" + Ws + "(?:" + Id + ")");
 var end_re = new RegExp("^" + Rbrace + Os + "@end" + CommentOpt + "$");
@@ -1328,7 +1329,7 @@ function expandGlobalAccessorsAndMacros() {
 // represented as a class, with a ton of methods and locals (eg for
 // file and line), performing expansion on one line.
 var new_re = new RegExp("@new\\s+(" + Id + ")" + QualifierOpt + "(?:\\.(Array)" + LParen + ")?", "g");
-var acc_re = new RegExp("(" + Id + ")" + PathLazy + "(?:" + Operation + "|)" + LParen, "g");
+var acc_re = new RegExp("(" + Id + ")" + PathOptLazy + "(?:" + Operation + "|)" + LParen, "g");
 // It would sure be nice to avoid the explicit ".Array" here, but I don't yet know how.
 var arr_re = new RegExp("(" + Id + ")" + QualifierOpt + "\\.Array" + PathOpt + Operation + LParen, "g");
 function expandMacrosIn(file, line, text) {
@@ -1372,22 +1373,42 @@ var OpAttr = {
 function accMacro(file, line, s, p, ms) {
     var m = ms[0];
     var className = ms[1];
-    var propName = ms[2].substring(1); // Strip the leading "."
-    var operation = ms[3] ? ms[3] : "get";
+    var propName = "";
+    var operation = "";
     var nomatch = [s, p + m.length];
     var left = s.substring(0, p);
+    if (!ms[2] && !ms[3])
+        return nomatch; // We're looking at something else
+    propName = ms[2] ? ms[2].substring(1) : ""; // Strip the leading "."
+    operation = ms[3] ? ms[3] : "get";
     var ty = knownTypes.get(className);
-    if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
+    if (!ty)
         return nomatch;
-    var cls = ty;
-    // findAccessibleFieldFor will vet the operation against the field type,
-    // so atomic/synchronic ops will only be allowed on appropriate types
-    var fld = cls.findAccessibleFieldFor(operation, propName);
-    if (!fld) {
-        var fld2 = cls.findAccessibleFieldFor("get", propName);
-        if (fld2)
-            warning(file, line, "No match for " + className + "  " + operation + "  " + propName);
-        return nomatch;
+    var offset = 0;
+    var targetType = null;
+    if (propName == "") {
+        if (!(ty.kind == DefnKind.Primitive || ty.kind == DefnKind.Struct))
+            throw new ProgramError(file, line, "Operation '" + operation + "' without a path requires a value type: " + s);
+        offset = 0;
+        targetType = ty;
+    }
+    else {
+        if (!(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct)) {
+            //throw new ProgramError(file, line, "Operation with a path requires a structured type: " + s);
+            return nomatch;
+        }
+        var cls = ty;
+        // findAccessibleFieldFor will vet the operation against the field type,
+        // so atomic/synchronic ops will only be allowed on appropriate types
+        var fld = cls.findAccessibleFieldFor(operation, propName);
+        if (!fld) {
+            var fld2 = cls.findAccessibleFieldFor("get", propName);
+            if (fld2)
+                warning(file, line, "No match for " + className + "  " + operation + "  " + propName);
+            return nomatch;
+        }
+        offset = fld.offset;
+        targetType = fld.type;
     }
     var pp = new ParamParser(file, line, s, p + m.length);
     var as = (pp).allArgs();
@@ -1397,12 +1418,12 @@ function accMacro(file, line, s, p, ms) {
     }
     ;
     // Issue #16: Watch it: Parens interact with semicolon insertion.
-    var ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + " + " + fld.offset + ")";
+    var ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + " + " + offset + ")";
     if (operation == "ref") {
         return [left + ref + s.substring(pp.where),
             left.length + ref.length];
     }
-    return loadFromRef(file, line, ref, fld.type, s, left, operation, pp, as[1], as[2], nomatch);
+    return loadFromRef(file, line, ref, targetType, s, left, operation, pp, as[1], as[2], nomatch);
 }
 function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, nomatch) {
     var mem = "", size = 0, synchronic = false, atomic = false, simd = false, shift = -1, simdType = "";
@@ -1580,12 +1601,12 @@ function newMacro(file, line, s, p, ms) {
     if (!t)
         throw new ProgramError(file, line, "Unknown type argument to @new: " + baseType);
     if (!isArray) {
-        // FIXME - lift this restriction for primitives and structs
-        if (t.kind != DefnKind.Class)
-            throw new ProgramError(file, line, "Cannot instantiate value types directly (yet)");
-        // NOTE, parens removed here
-        // Issue #16: Watch it: Parens interact with semicolon insertion.
-        var expr_1 = baseType + ".initInstance(FlatJS.allocOrThrow(" + t.size + "," + t.align + "))";
+        var expr_1 = "FlatJS.allocOrThrow(" + t.size + "," + t.align + ")";
+        if (t.kind == DefnKind.Class) {
+            // NOTE, parens removed here
+            // Issue #16: Watch it: Parens interact with semicolon insertion.
+            expr_1 = baseType + ".initInstance(" + expr_1 + ")";
+        }
         return [left + expr_1 + s.substring(p + m.length),
             left.length + expr_1.length];
     }
