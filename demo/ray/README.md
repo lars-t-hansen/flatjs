@@ -1,3 +1,3 @@
-Ray tracer - flatjs sequential code.
+Ray tracer - sequential code.
 
 expected-output.ppm is the expected output with all features turned on.
