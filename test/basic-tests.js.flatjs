@@ -79,6 +79,13 @@ assertEq(glob, 86);
 
 // Basic inheritance
 
+var XSELF = { x: 10, z: { ref: -99 } };
+var YSELF = { y: 20, z: { set: function (v) { g_probe2 = v } } };
+var g_probe = 0;
+var g_probe2 = 0;
+var ZSELF = { deep6: function () { g_probe3 = "here"; } };
+var g_probe3 = "there";
+
 @flatjs class Point3D extends Point {
     z:int32
 
@@ -86,6 +93,11 @@ assertEq(glob, 86);
 	SELF.x.set(x);
 	SELF.y.set(y);
 	SELF.z.set(z);
+	XSELF.x = 37;	        // Should not be expanded
+	YSELF.y = XSELF.x;	// Ditto
+	g_probe = XSELF.z.ref;	// Ditto
+	YSELF.z.set(10);	// Ditto
+	ZSELF.deep6();		// Ditto
 	return SELF;
     }
 
@@ -106,6 +118,12 @@ assertEq(Point.y(q), 7);
 assertEq(Point3D.x(q), 5);
 assertEq(Point3D.y(q), 7);
 assertEq(Point3D.z(q), 8);
+
+assertEq(XSELF.x, 37);
+assertEq(YSELF.y, 37);
+assertEq(g_probe, -99);
+assertEq(g_probe2, 10);
+assertEq(g_probe3, "here");
 
 var qo = new Point3D(q);
 assertEq(qo.pointer, q);

@@ -439,6 +439,7 @@ function main(args: string[]):void {
 	checkMethods();
 	layoutTypes();
 	createVirtuals();
+
 	expandSelfAccessors();
 	pasteupTypes();
 	expandGlobalAccessorsAndMacros();
@@ -452,6 +453,25 @@ function main(args: string[]):void {
 	process.exit(1);
     }
 }
+
+function log2(x:number):number {
+    if (x <= 0)
+	throw new InternalError("log2: " + x);
+    let i = 0;
+    while (x > 1) {
+	i++;
+	x >>= 1;
+    }
+    return i;
+}
+
+function warning(file:string, line:number, msg:string):void {
+    console.log(file + ":" + line + ": Warning: " + msg);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+// Parsing
 
 const Ws = "\\s+";
 const Os = "\\s*";
@@ -735,6 +755,18 @@ class ParamParser {
 	return s;
     }
 }
+
+function isInitial(c:string):boolean {
+    return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_';
+}
+
+function isSubsequent(c:string):boolean {
+    return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_';
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+// Type checking
 
 const knownTypes = new SMap<Defn>();
 const knownIds = new SMap<ClassDefn>();
@@ -1053,10 +1085,15 @@ function findMethodImplFor(cls:ClassDefn, stopAt:ClassDefn, name:string):string 
     throw new InternalError("Method not found: " + name);
 }
 
+function findType(name:string):Defn {
+    if (!knownTypes.test(name))
+	throw new InternalError("Unknown type in sizeofType: " + name);
+    return knownTypes.get(name);
+}
 
-// Issue #17: This will also match bogus things like XSELF, because
-// there's no reliable left-context handling.  Need to add
-// programmatic guards for that.
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+// Macro expansion and pasteup
 
 const self_getter1_re = new RegExp("SELF" + Path + NullaryOperation, "g");
 const self_getter2_re = new RegExp("SELF" + Path, "g");
@@ -1073,21 +1110,26 @@ function expandSelfAccessors():void {
 	    for ( let k=0 ; k < body.length ; k++ ) {
 		body[k] = myExec(t.file, t.line, self_setter_re,
 				 function (file:string, line:number, s:string, p:number, m:RegExpExecArray):[string,number] {
+				     if (p > 0 && isSubsequent(s.charAt(p-1))) return [s, p+m.length];
 				     return replaceSetterShorthand(file, line, s, p, m, t);
 				 },
 				 body[k]);
 		body[k] = body[k].replace(self_accessor_re, function (m, path, operation, p, s) {
+		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
 		    return t.name + path + "." + operation + "(SELF, ";
 		});
 		body[k] = body[k].replace(self_invoke_re, function (m, id, p, s) {
+		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
 		    var pp = new ParamParser(t.file, t.line, s, p+m.length);
 		    var args = pp.allArgs();
 		    return t.name + "." + id + "(SELF" + (args.length > 0 ? ", " : " ");
 		});
 		body[k] = body[k].replace(self_getter1_re, function (m, path, operation, p, s) {
+		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
 		    return t.name + path + "." + operation + "(SELF)";
 		});
 		body[k] = body[k].replace(self_getter2_re, function (m, path, p, s) {
+		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
 		    return t.name + path + "(SELF)";
 		});
 	    }
@@ -1638,12 +1680,6 @@ function newMacro(file, line, s:string, p:number, ms:RegExpExecArray):[string,nu
 	    left.length + expr.length];
 }
 
-function findType(name:string):Defn {
-    if (!knownTypes.test(name))
-	throw new InternalError("Unknown type in sizeofType: " + name);
-    return knownTypes.get(name);
-}
-
 // This can also check if x is already properly parenthesized, though that
 // involves counting parens, at least trivially (and then does it matter?).
 // Consider (a).(b), which should be parenthesized as ((a).(b)).
@@ -1654,21 +1690,6 @@ function endstrip(x:string):string {
     if (/^[a-zA-Z0-9]+$/.test(x))
 	return x;
     return "(" + x + ")";
-}
-
-function log2(x:number):number {
-    if (x <= 0)
-	throw new InternalError("log2: " + x);
-    let i = 0;
-    while (x > 1) {
-	i++;
-	x >>= 1;
-    }
-    return i;
-}
-
-function warning(file:string, line:number, msg:string):void {
-    console.log(file + ":" + line + ": Warning: " + msg);
 }
 
 main(process.argv.slice(2));
