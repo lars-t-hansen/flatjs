@@ -1,4 +1,4 @@
-/* -*- mode: javascript -*- */
+/* -*- mode: javascript; electric-indent-local-mode: nil -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -197,6 +197,14 @@ var ClassDefn = (function (_super) {
         }
         return false;
     };
+    ClassDefn.prototype.getMethod = function (name) {
+        for (var _i = 0, _a = this.methods; _i < _a.length; _i++) {
+            var m = _a[_i];
+            if (m.name == name)
+                return m;
+        }
+        return null;
+    };
     return ClassDefn;
 })(UserDefn);
 var Virtual = (function () {
@@ -234,8 +242,6 @@ var VirtualMethodIterator = (function () {
             }
             var m = this.cls.methods[this.i++];
             if (m.kind != MethodKind.Virtual)
-                continue;
-            if (m.name == "init")
                 continue;
             if (this.filter.test(m.name))
                 continue;
@@ -315,8 +321,9 @@ var Prop = (function () {
 var MethodKind;
 (function (MethodKind) {
     MethodKind[MethodKind["Virtual"] = 0] = "Virtual";
-    MethodKind[MethodKind["Get"] = 1] = "Get";
-    MethodKind[MethodKind["Set"] = 2] = "Set";
+    MethodKind[MethodKind["NonVirtual"] = 1] = "NonVirtual";
+    MethodKind[MethodKind["Get"] = 2] = "Get";
+    MethodKind[MethodKind["Set"] = 3] = "Set";
 })(MethodKind || (MethodKind = {}));
 var Method = (function () {
     function Method(line, kind, name, signature, body) {
@@ -434,6 +441,14 @@ var SSet = (function () {
     };
     return SSet;
 })();
+var SourceLine = (function () {
+    function SourceLine(file, line, text) {
+        this.file = file;
+        this.line = line;
+        this.text = text;
+    }
+    return SourceLine;
+})();
 var Source = (function () {
     function Source(input_file, output_file, defs, lines) {
         this.input_file = input_file;
@@ -441,11 +456,14 @@ var Source = (function () {
         this.defs = defs;
         this.lines = lines;
     }
+    Source.prototype.allText = function () {
+        return this.lines.map(function (x) { return x.text; }).join("\n");
+    };
     return Source;
 })();
 function CapturedError(name) { this.name = name; }
 CapturedError.prototype = new Error("CapturedError");
-function InternalError(msg) { this.message = "Internal error: " + msg; console.log(this.message); }
+function InternalError(msg) { this.message = "Internal error: " + msg; }
 InternalError.prototype = new CapturedError("InternalError");
 function UsageError(msg) { this.message = "Usage error: " + msg; }
 UsageError.prototype = new CapturedError("UsageError");
@@ -457,9 +475,8 @@ function main(args) {
     try {
         for (var _i = 0; _i < args.length; _i++) {
             var input_file = args[_i];
-            if (input_file.length < 10 ||
-                (input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
-                throw new UsageError("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
+            if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
+                throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
             var text = fs.readFileSync(input_file, "utf8");
             var lines = text.split("\n");
             var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
@@ -469,6 +486,7 @@ function main(args) {
         buildTypeMap();
         resolveTypeRefs();
         checkRecursion();
+        checkMethods();
         layoutTypes();
         createVirtuals();
         expandSelfAccessors();
@@ -476,32 +494,58 @@ function main(args) {
         expandGlobalAccessorsAndMacros();
         for (var _b = 0; _b < allSources.length; _b++) {
             var s = allSources[_b];
-            fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
+            fs.writeFileSync(s.output_file, s.allText(), "utf8");
         }
     }
     catch (e) {
-        if (e instanceof CapturedError)
-            console.log(e.message);
-        else
-            throw e;
+        console.log(e.message);
+        //console.log(e);
+        process.exit(1);
     }
 }
+function log2(x) {
+    if (x <= 0)
+        throw new InternalError("log2: " + x);
+    var i = 0;
+    while (x > 1) {
+        i++;
+        x >>= 1;
+    }
+    return i;
+}
+function warning(file, line, msg) {
+    console.log(file + ":" + line + ": Warning: " + msg);
+}
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+// Parsing
 var Ws = "\\s+";
 var Os = "\\s*";
-var Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed
+var Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed yet
 var Lbrace = Os + "\\{";
 var Rbrace = Os + "\\}";
-var Comment = Os + "(?:\\/\\/.*)?";
+var LParen = Os + "\\(";
+var CommentOpt = Os + "(?:\\/\\/.*)?";
+var QualifierOpt = "(?:\\.(atomic|synchronic))?";
+var OpNames = "at|get|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
+var Operation = "(?:\\.(" + OpNames + "))";
+var OperationOpt = Operation + "?";
+var OperationLParen = "(?:\\.(" + OpNames + ")" + LParen + ")";
+var NullaryOperation = "(?:\\.(ref|notify))";
+var Path = "((?:\\." + Id + ")+)";
+var PathLazy = "((?:\\." + Id + ")+?)";
+var PathOpt = "((?:\\." + Id + ")*)";
+var PathOptLazy = "((?:\\." + Id + ")*?)";
+var AssignOp = "(=|\\+=|-=|&=|\\|=|\\^=)(?!=)";
 var start_re = new RegExp("^" + Os + "@flatjs" + Ws + "(?:struct|class)" + Ws + "(?:" + Id + ")");
-var end_re = new RegExp("^" + Rbrace + Os + "@end" + Comment + "$");
-var struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + Comment + "$");
-var class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + Comment + "$");
-var special_re = new RegExp("^" + Os + "@(get|set|copy)" + Os + "(\\(" + Os + "SELF.*)$");
-var method_re = new RegExp("^" + Os + "@method" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "SELF.*)$");
-var blank_re = new RegExp("^" + Os + Comment + "$");
+var end_re = new RegExp("^" + Rbrace + Os + "@end" + CommentOpt + "$");
+var struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + CommentOpt + "$");
+var class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + CommentOpt + "$");
+var special_re = new RegExp("^" + Os + "@(get|set)" + "(" + LParen + Os + "SELF.*)$");
+var method_re = new RegExp("^" + Os + "@(method|virtual)" + Ws + "(" + Id + ")" + "(" + LParen + Os + "SELF.*)$");
+var blank_re = new RegExp("^" + Os + CommentOpt + "$");
 var space_re = new RegExp("^" + Os + "$");
-var prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(?:(atomic|synchronic)" + Ws + ")?(" + Id + ")" + Os + ";?" + Comment + "$");
-var aprop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "array" + Os + "\\(" + Os + "(" + Id + ")" + Os + "\\)" + Os + ";?" + Comment + "$");
+var prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(" + Id + ")" + QualifierOpt + "(?:\.(Array))?" + Os + ";?" + CommentOpt + "$");
 function collectDefinitions(filename, lines) {
     var defs = [];
     var nlines = [];
@@ -509,7 +553,7 @@ function collectDefinitions(filename, lines) {
     while (i < lim) {
         var l = lines[i++];
         if (!start_re.test(l)) {
-            nlines.push(l);
+            nlines.push(new SourceLine(filename, i, l));
             continue;
         }
         var kind = "";
@@ -534,6 +578,7 @@ function collectDefinitions(filename, lines) {
         var mbody = null;
         var method_type = MethodKind.Virtual;
         var method_name = "";
+        var method_line = 0;
         var method_signature = null;
         // Do not check for duplicate names here since that needs to
         // take into account inheritance.
@@ -545,13 +590,14 @@ function collectDefinitions(filename, lines) {
                 if (kind != "class")
                     throw new ProgramError(filename, i, "@method is only allowed in classes");
                 if (in_method)
-                    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+                    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
                 in_method = true;
-                method_type = MethodKind.Virtual;
-                method_name = m[1];
+                method_line = i;
+                method_type = (m[1] == "method" ? MethodKind.NonVirtual : MethodKind.Virtual);
+                method_name = m[2];
                 // Parse the signature.  Just use the param parser for now,
                 // but note that what we get back will need postprocessing.
-                var pp = new ParamParser(filename, i, m[2], 1);
+                var pp = new ParamParser(filename, i, m[3], 1);
                 var args = pp.allArgs();
                 args.shift(); // Discard SELF
                 // Issue #15: In principle there are two signatures here: there is the
@@ -559,13 +605,14 @@ function collectDefinitions(filename, lines) {
                 // virtual, and there is the set of arguments extracted from that,
                 // including any splat.
                 method_signature = args.map(function (x) { return parameterToArgument(filename, i, x); });
-                mbody = [m[2]];
+                mbody = [m[3]];
             }
             else if (m = special_re.exec(l)) {
                 if (kind != "struct")
                     throw new ProgramError(filename, i, "@" + m[1] + " is only allowed in structs");
                 if (in_method)
-                    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+                    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
+                method_line = i;
                 in_method = true;
                 switch (m[1]) {
                     case "get":
@@ -589,7 +636,7 @@ function collectDefinitions(filename, lines) {
             }
             else if (m = prop_re.exec(l)) {
                 var qual = PropQual.None;
-                switch (m[2]) {
+                switch (m[3]) {
                     case "synchronic":
                         qual = PropQual.Synchronic;
                         break;
@@ -597,10 +644,7 @@ function collectDefinitions(filename, lines) {
                         qual = PropQual.Atomic;
                         break;
                 }
-                properties.push(new Prop(i, m[1], qual, false, m[3]));
-            }
-            else if (m = aprop_re.exec(l)) {
-                properties.push(new Prop(i, m[1], PropQual.None, true, m[2]));
+                properties.push(new Prop(i, m[1], qual, m[4] == "Array", m[2]));
             }
             else if (blank_re.test(l)) {
             }
@@ -608,7 +652,7 @@ function collectDefinitions(filename, lines) {
                 throw new ProgramError(filename, i, "Syntax error: Not a property or method: " + l);
         }
         if (in_method)
-            methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+            methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
         if (kind == "class")
             defs.push(new ClassDefn(filename, lineno, name_1, inherit, properties, methods, nlines.length));
         else
@@ -649,7 +693,6 @@ var ParamParser = (function () {
         var sawRightParen = false;
         var sawComma = false;
         var fellOff = false;
-        // Issue #7: Really should handle /* .. */ comments
         // Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
         loop: for (;;) {
             if (this.pos == this.lim) {
@@ -662,6 +705,15 @@ var ParamParser = (function () {
                     if (this.pos < this.lim && this.input.charAt(this.pos) == '/') {
                         this.done = true;
                         break loop;
+                    }
+                    if (this.pos < this.lim && this.input.charAt(this.pos) == '*') {
+                        this.pos++;
+                        for (;;) {
+                            if (this.pos == this.lim)
+                                throw new ProgramError(this.file, this.line, "Line ended unexpectedly - still nested within comment.");
+                            if (this.input.charAt(this.pos++) == '*' && this.pos < this.lim && this.input.charAt(this.pos) == '/')
+                                break;
+                        }
                     }
                     break;
                 case ';':
@@ -695,9 +747,24 @@ var ParamParser = (function () {
                     depth--;
                     break;
                 case '\'':
-                case '"':
-                    // Issue #5: implement string support
-                    throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
+                case '"': {
+                    var c = this.input.charAt(this.pos - 1);
+                    for (;;) {
+                        if (this.pos == this.lim)
+                            throw new ProgramError(this.file, this.line, "Line ended unexpectedly - within a string.");
+                        var d = this.input.charAt(this.pos++);
+                        if (d == c)
+                            break;
+                        if (d == '\\') {
+                            if (this.pos < this.lim)
+                                this.pos++;
+                        }
+                    }
+                    break;
+                }
+                case '`':
+                    // Issue #25: Allow template strings
+                    throw new ProgramError(this.file, this.line, "Avoid template strings in arguments for now");
             }
         }
         var result = this.cleanupArg(this.input.substring(start, fellOff ? this.pos : this.pos - 1));
@@ -707,7 +774,7 @@ var ParamParser = (function () {
         if (this.done && depth > 0)
             throw new ProgramError(this.file, this.line, "Line ended unexpectedly - still nested within parentheses.");
         if (this.done && this.requireRightParen && !sawRightParen)
-            throw new ProgramError(this.file, this.line, "Line ended unexpectedly - expected ')'.");
+            throw new ProgramError(this.file, this.line, "Line ended unexpectedly - expected ')'.  " + this.input);
         return result;
     };
     ParamParser.prototype.allArgs = function () {
@@ -732,6 +799,15 @@ var ParamParser = (function () {
     };
     return ParamParser;
 })();
+function isInitial(c) {
+    return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_';
+}
+function isSubsequent(c) {
+    return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_';
+}
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+// Type checking
 var knownTypes = new SMap();
 var knownIds = new SMap();
 var userTypes = [];
@@ -851,6 +927,31 @@ function checkRecursion() {
         d.checked = true;
     }
 }
+// Ugh, this is wrong for init(), where we want each class to have its
+// own.  Really there's no reason to outlaw same-named methods in base
+// or subclass, except it's confusing to allow it.
+function checkMethods() {
+    for (var _i = 0; _i < userTypes.length; _i++) {
+        var d = userTypes[_i];
+        if (d.kind != DefnKind.Class)
+            continue;
+        var cls = d;
+        for (var _a = 0, _b = d.methods; _a < _b.length; _a++) {
+            var m = _b[_a];
+            for (var b = cls.baseTypeRef; b; b = b.baseTypeRef) {
+                var bm = b.getMethod(m.name);
+                if (!bm)
+                    continue;
+                if (m.kind == MethodKind.NonVirtual && bm.kind == MethodKind.Virtual)
+                    throw new ProgramError(cls.file, m.line, "Non-virtual method " + m.name + " is defined virtual in a base class " + b.name + " (" + b.file + ":" + b.line + ")");
+                if (m.kind == MethodKind.Virtual && bm.kind != MethodKind.Virtual)
+                    throw new ProgramError(cls.file, m.line, "Virtual method " + m.name + " is defined non-virtual in a base class " + b.name + " (" + b.file + ":" + b.line + ")");
+                if (m.kind == MethodKind.Virtual) {
+                }
+            }
+        }
+    }
+}
 function layoutTypes() {
     for (var _i = 0; _i < userTypes.length; _i++) {
         var d = userTypes[_i];
@@ -916,7 +1017,7 @@ function layoutDefn(d, map, size, align) {
                 var root = p.name;
                 var mIter = st.map.values();
                 for (var fld = mIter.next(); fld; fld = mIter.next()) {
-                    var fldname = root + "_" + fld.name;
+                    var fldname = root + "." + fld.name;
                     map.put(fldname, new MapEntry(fldname, fld.expand, size + fld.offset, fld.type));
                 }
                 size += st.size;
@@ -1009,13 +1110,19 @@ function findMethodImplFor(cls, stopAt, name) {
         return findMethodImplFor(cls.baseTypeRef, stopAt, name);
     throw new InternalError("Method not found: " + name);
 }
-// Issue #17: This will also match bogus things like XSELF, because
-// there's no reliable left-context handling.  Need to add
-// programmatic guards for that.
-var self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
-var self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
-var self_invoke_re = /SELF\.[a-zA-Z0-9]+\s*\(/g;
-var self_setter_re = /SELF\.([a-zA-Z0-9_]+)\s*(=|\+=|-=|&=|\|=|\^=)(?!=)\s*/g;
+function findType(name) {
+    if (!knownTypes.test(name))
+        throw new InternalError("Unknown type in sizeofType: " + name);
+    return knownTypes.get(name);
+}
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+// Macro expansion and pasteup
+var self_getter1_re = new RegExp("SELF" + Path + NullaryOperation, "g");
+var self_getter2_re = new RegExp("SELF" + Path, "g");
+var self_accessor_re = new RegExp("SELF" + Path + OperationLParen, "g");
+var self_setter_re = new RegExp("SELF" + Path + Os + AssignOp + Os, "g");
+var self_invoke_re = new RegExp("SELF\\.(" + Id + ")" + LParen, "g");
 // Name validity will be checked on the next expansion pass.
 function expandSelfAccessors() {
     for (var _i = 0; _i < userTypes.length; _i++) {
@@ -1025,16 +1132,31 @@ function expandSelfAccessors() {
             var body = m.body;
             for (var k = 0; k < body.length; k++) {
                 body[k] = myExec(t.file, t.line, self_setter_re, function (file, line, s, p, m) {
+                    if (p > 0 && isSubsequent(s.charAt(p - 1)))
+                        return [s, p + m.length];
                     return replaceSetterShorthand(file, line, s, p, m, t);
                 }, body[k]);
-                body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
-                    return t.name + "." + m.substring(5) + "SELF, ";
+                body[k] = body[k].replace(self_accessor_re, function (m, path, operation, p, s) {
+                    if (p > 0 && isSubsequent(s.charAt(p - 1)))
+                        return m;
+                    return t.name + path + "." + operation + "(SELF, ";
                 });
-                body[k] = body[k].replace(self_invoke_re, function (m, p, s) {
-                    return t.name + "." + m.substring(5) + "SELF, ";
+                body[k] = body[k].replace(self_invoke_re, function (m, id, p, s) {
+                    if (p > 0 && isSubsequent(s.charAt(p - 1)))
+                        return m;
+                    var pp = new ParamParser(t.file, t.line, s, p + m.length);
+                    var args = pp.allArgs();
+                    return t.name + "." + id + "(SELF" + (args.length > 0 ? ", " : " ");
                 });
-                body[k] = body[k].replace(self_getter_re, function (m, p, s) {
-                    return t.name + "." + m.substring(5) + "(SELF)";
+                body[k] = body[k].replace(self_getter1_re, function (m, path, operation, p, s) {
+                    if (p > 0 && isSubsequent(s.charAt(p - 1)))
+                        return m;
+                    return t.name + path + "." + operation + "(SELF)";
+                });
+                body[k] = body[k].replace(self_getter2_re, function (m, path, p, s) {
+                    if (p > 0 && isSubsequent(s.charAt(p - 1)))
+                        return m;
+                    return t.name + path + "(SELF)";
                 });
             }
         }
@@ -1063,17 +1185,28 @@ var AssignmentOps = { "=": "set",
 };
 function replaceSetterShorthand(file, line, s, p, ms, t) {
     //return [s, p+m.length];
+    var m = ms[0];
+    var path = ms[1];
+    var operation = ms[2];
     var left = s.substring(0, p);
-    var pp = new ParamParser(file, line, s, p + ms[0].length, false, true);
+    var pp = new ParamParser(file, line, s, p + m.length, false, true);
     var rhs = pp.nextArg();
     if (!rhs)
         throw new ProgramError(file, line, "Missing right-hand-side expression in assignment");
     // Be sure to re-expand the RHS.
-    var substitution_left = left + " " + t.name + "." + AssignmentOps[ms[2]] + "_" + ms[1] + "(SELF, ";
+    var substitution_left = left + " " + t.name + path + "." + AssignmentOps[operation] + "(SELF, ";
     return [(substitution_left + " " + rhs + ")" + (pp.sawSemi ? ';' : '') + " " + s.substring(pp.where)),
         substitution_left.length];
 }
+function linePusher(info, nlines) {
+    return function (text) {
+        var _a = info(), file = _a[0], line = _a[1];
+        nlines.push(new SourceLine(file, line, text));
+    };
+}
 function pasteupTypes() {
+    var emitFn = ""; // ES5 workaround - would otherwise be local to inner "for" loop
+    var emitLine = 0; // ditto
     for (var _i = 0; _i < allSources.length; _i++) {
         var source = allSources[_i];
         var defs = source.defs;
@@ -1084,36 +1217,59 @@ function pasteupTypes() {
             var d = defs[_a];
             while (k < d.origin && k < lines.length)
                 nlines.push(lines[k++]);
-            nlines.push("const " + d.name + " = {");
-            nlines.push("  NAME: \"" + d.name + "\",");
-            nlines.push("  SIZE: " + d.size + ",");
-            nlines.push("  ALIGN: " + d.align + ",");
+            var push = linePusher(function () { return [emitFn, emitLine++]; }, nlines);
+            emitFn = d.file + "[class definition]";
+            emitLine = d.line;
+            if (d.kind == DefnKind.Class)
+                push("function " + d.name + "(p) { this._pointer = (p|0); }");
+            else
+                push("function " + d.name + "() {}");
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                nlines.push("  CLSID: " + cls.classId + ",");
-                nlines.push("  get BASE() { return " + (cls.baseName ? cls.baseName : "null") + "; },");
+                if (cls.baseName)
+                    push(d.name + ".prototype = new " + cls.baseName + ";");
+                else
+                    push("Object.defineProperty(" + d.name + ".prototype, 'pointer', { get: function () { return this._pointer } });");
+            }
+            push(d.name + ".NAME = \"" + d.name + "\";");
+            push(d.name + ".SIZE = " + d.size + ";");
+            push(d.name + ".ALIGN = " + d.align + ";");
+            if (d.kind == DefnKind.Class) {
+                var cls = d;
+                push(d.name + ".CLSID = " + cls.classId + ";");
+                push("Object.defineProperty(" + d.name + ", 'BASE', {get: function () { return " + (cls.baseName ? cls.baseName : "null") + "; }});");
             }
             // Now do methods.
             //
             // Implementation methods are emitted directly in the defining type, with a name suffix _impl.
             // For struct methods, the name is "_get_impl", "_set_impl", or "_copy_impl".
+            var haveSetter = false;
+            var haveGetter = false;
             for (var _b = 0, _c = d.methods; _b < _c.length; _b++) {
                 var m = _c[_b];
                 var name_2 = m.name;
                 if (name_2 == "") {
                     switch (m.kind) {
                         case MethodKind.Get:
+                            if (haveGetter)
+                                throw new ProgramError(d.file, m.line, "Duplicate struct getter");
                             name_2 = "_get_impl";
+                            haveGetter = true;
                             break;
                         case MethodKind.Set:
+                            if (haveSetter)
+                                throw new ProgramError(d.file, m.line, "Duplicate struct setter");
                             name_2 = "_set_impl";
+                            haveSetter = true;
                             break;
                     }
                 }
-                else if (name_2 == "init")
+                else if (m.kind == MethodKind.NonVirtual)
                     ;
                 else
                     name_2 += "_impl";
+                emitFn = d.file + "[method " + name_2 + "]";
+                emitLine = m.line;
                 var body = m.body;
                 // Formatting: useful to strip all trailing blank lines from
                 // the body first.
@@ -1121,70 +1277,101 @@ function pasteupTypes() {
                 while (last > 0 && /^\s*$/.test(body[last]))
                     last--;
                 if (last == 0)
-                    nlines.push("  " + name_2 + " : function " + body[0]);
+                    push(d.name + "." + name_2 + " = function " + body[0]);
                 else {
-                    nlines.push("  " + name_2 + " : function " + body[0]);
+                    push(d.name + "." + name_2 + " = function " + body[0]);
                     for (var x = 1; x < last; x++)
-                        nlines.push(body[x]);
-                    nlines.push(body[last]);
+                        push(body[x]);
+                    push(body[last]);
                 }
-                nlines.push(","); // Gross hack, but if a comment is the last line of the body then necessary
+            }
+            // Now default methods, if appropriate.
+            if (d.kind == DefnKind.Struct) {
+                var struct = d;
+                if (!haveGetter) {
+                    push(d.name + "._get_impl = function (SELF) {");
+                    push("  var v = new " + d.name + ";");
+                    // Use longhand for access, since self accessors are expanded before pasteup.
+                    // TODO: Would be useful to fix that.
+                    for (var _d = 0, _e = d.props; _d < _e.length; _d++) {
+                        var p = _e[_d];
+                        push("  v." + p.name + " = " + d.name + "." + p.name + "(SELF);");
+                    }
+                    push("  return v;");
+                    push("}");
+                    struct.hasGetMethod = true;
+                }
+                if (!haveSetter) {
+                    push(d.name + "._set_impl = function (SELF, v) {");
+                    // TODO: as above.
+                    for (var _f = 0, _g = d.props; _f < _g.length; _f++) {
+                        var p = _g[_f];
+                        push("  " + d.name + "." + p.name + ".set(SELF, v." + p.name + ");");
+                    }
+                    push("}");
+                    struct.hasSetMethod = true;
+                }
             }
             // Now do vtable, if appropriate.
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                for (var _d = 0, _e = cls.vtable; _d < _e.length; _d++) {
-                    var virtual = _e[_d];
+                for (var _h = 0, _j = cls.vtable; _h < _j.length; _h++) {
+                    var virtual = _j[_h];
+                    // Shouldn't matter much
+                    emitFn = d.file + "[vtable " + virtual.name + "]";
+                    emitLine = d.line;
                     var signature = virtual.signature();
-                    nlines.push(virtual.name + " : function (SELF " + signature + ") {");
-                    nlines.push("  switch (_mem_int32[SELF>>2]) {");
+                    push(d.name + "." + virtual.name + " = function (SELF " + signature + ") {");
+                    push("  switch (_mem_int32[SELF>>2]) {");
                     var kv = virtual.reverseCases.keysValues();
-                    for (var _f = kv.next(), name_3 = _f[0], cases = _f[1]; name_3; (_g = kv.next(), name_3 = _g[0], cases = _g[1], _g)) {
-                        for (var _h = 0; _h < cases.length; _h++) {
-                            var c = cases[_h];
-                            nlines.push("    case " + c + ":");
+                    for (var _k = kv.next(), name_3 = _k[0], cases = _k[1]; name_3; (_l = kv.next(), name_3 = _l[0], cases = _l[1], _l)) {
+                        for (var _m = 0; _m < cases.length; _m++) {
+                            var c = cases[_m];
+                            push("    case " + c + ":");
                         }
-                        nlines.push("      return " + name_3 + "(SELF " + signature + ");");
+                        push("      return " + name_3 + "(SELF " + signature + ");");
                     }
-                    nlines.push("    default:");
-                    nlines.push("      " + (virtual.default_ ?
+                    push("    default:");
+                    push("      " + (virtual.default_ ?
                         "return " + virtual.default_ + "(SELF " + signature + ")" :
                         "throw FlatJS._badType(SELF)") + ";");
-                    nlines.push("  }");
-                    nlines.push("},");
+                    push("  }");
+                    push("}");
                 }
             }
             // Now do other methods: initInstance.
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                nlines.push("initInstance:function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; },");
+                push(d.name + ".initInstance = function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; }");
             }
-            nlines.push("}");
             if (d.kind == DefnKind.Class)
-                nlines.push("FlatJS._idToType[" + d.classId + "] = " + d.name + ";");
+                push("FlatJS._idToType[" + d.classId + "] = " + d.name + ";");
         }
         while (k < lines.length)
             nlines.push(lines[k++]);
         source.lines = nlines;
     }
-    var _g;
+    var _l;
 }
 function expandGlobalAccessorsAndMacros() {
     for (var _i = 0; _i < allSources.length; _i++) {
         var source = allSources[_i];
         var lines = source.lines;
         var nlines = [];
-        for (var j = 0; j < lines.length; j++)
-            nlines.push(expandMacrosIn(source.input_file, j + 1, lines[j]));
+        for (var _a = 0; _a < lines.length; _a++) {
+            var l = lines[_a];
+            nlines.push(new SourceLine(l.file, l.line, expandMacrosIn(l.file, l.line, l.text)));
+        }
         source.lines = nlines;
     }
 }
 // TODO: it's likely that the expandMacrosIn is really better
 // represented as a class, with a ton of methods and locals (eg for
 // file and line), performing expansion on one line.
-var acc_re = /([A-Za-z][A-Za-z0-9]*)\.(?:(set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)_)?([a-zA-Z0-9_]+)\s*\(/g;
-var arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
-var new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
+var new_re = new RegExp("@new\\s+(" + Id + ")" + QualifierOpt + "(?:\\.(Array)" + LParen + ")?", "g");
+var acc_re = new RegExp("(" + Id + ")" + PathOptLazy + "(?:" + Operation + "|)" + LParen, "g");
+// It would sure be nice to avoid the explicit ".Array" here, but I don't yet know how.
+var arr_re = new RegExp("(" + Id + ")" + QualifierOpt + "\\.Array" + PathOpt + Operation + LParen, "g");
 function expandMacrosIn(file, line, text) {
     return myExec(file, line, new_re, newMacro, myExec(file, line, arr_re, arrMacro, myExec(file, line, acc_re, accMacro, text)));
 }
@@ -1222,41 +1409,61 @@ var OpAttr = {
     "expectUpdate": { arity: 3, atomic: "", synchronic: "_synchronicExpectUpdate" },
     "compareExchange": { arity: 3, atomic: "compareExchange", synchronic: "_synchronicCompareExchange" },
 };
+//    "at": { arity: 1, atomic: "", synchronic: "" }
 function accMacro(file, line, s, p, ms) {
     var m = ms[0];
     var className = ms[1];
-    var operation = ms[2];
-    var propName = ms[3];
+    var propName = "";
+    var operation = "";
     var nomatch = [s, p + m.length];
     var left = s.substring(0, p);
-    if (!operation)
-        operation = "get";
+    if (!ms[2] && !ms[3])
+        return nomatch; // We're looking at something else
+    propName = ms[2] ? ms[2].substring(1) : ""; // Strip the leading "."
+    operation = ms[3] ? ms[3] : "get";
     var ty = knownTypes.get(className);
-    if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
+    if (!ty)
         return nomatch;
-    var cls = ty;
-    // findAccessibleFieldFor will vet the operation against the field type,
-    // so atomic/synchronic ops will only be allowed on appropriate types
-    var fld = cls.findAccessibleFieldFor(operation, propName);
-    if (!fld) {
-        //console.log("No match for " + className + "  " + operation + "  " + propName);
-        return nomatch;
+    var offset = 0;
+    var targetType = null;
+    if (propName == "") {
+        if (!(ty.kind == DefnKind.Primitive || ty.kind == DefnKind.Struct))
+            throw new ProgramError(file, line, "Operation '" + operation + "' without a path requires a value type: " + s);
+        offset = 0;
+        targetType = ty;
     }
-    // Issue #6: Emit warnings for arity abuse, at a minimum.
+    else {
+        if (!(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct)) {
+            //throw new ProgramError(file, line, "Operation with a path requires a structured type: " + s);
+            return nomatch;
+        }
+        var cls = ty;
+        // findAccessibleFieldFor will vet the operation against the field type,
+        // so atomic/synchronic ops will only be allowed on appropriate types
+        var fld = cls.findAccessibleFieldFor(operation, propName);
+        if (!fld) {
+            var fld2 = cls.findAccessibleFieldFor("get", propName);
+            if (fld2)
+                warning(file, line, "No match for " + className + "  " + operation + "  " + propName);
+            return nomatch;
+        }
+        offset = fld.offset;
+        targetType = fld.type;
+    }
     var pp = new ParamParser(file, line, s, p + m.length);
     var as = (pp).allArgs();
     if (OpAttr[operation].arity != as.length) {
-        console.log("Bad accessor arity " + propName + " / " + as.length);
+        warning(file, line, ("Bad accessor arity " + propName + " / " + as.length + ": ") + s);
         return nomatch;
     }
     ;
     // Issue #16: Watch it: Parens interact with semicolon insertion.
-    var ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + " + " + fld.offset + ")";
+    var ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + " + " + offset + ")";
     if (operation == "ref") {
         return [left + ref + s.substring(pp.where),
             left.length + ref.length];
     }
-    return loadFromRef(file, line, ref, fld.type, s, left, operation, pp, as[1], as[2], nomatch);
+    return loadFromRef(file, line, ref, targetType, s, left, operation, pp, as[1], as[2], nomatch);
 }
 function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, nomatch) {
     var mem = "", size = 0, synchronic = false, atomic = false, simd = false, shift = -1, simdType = "";
@@ -1337,7 +1544,7 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
                     expr = "FlatJS." + OpAttr[operation].synchronic + "(" + ref + ", " + mem + ", " + fieldIndex + ", " + rhs + ", " + rhs2 + ")";
                 break;
             default:
-                throw new InternalError("No operator: " + operation + " " + s);
+                throw new InternalError("No operator: " + operation + " line: " + s);
         }
         // Issue #16: Parens interact with semicolon insertion.
         //expr = `(${expr})`;
@@ -1358,27 +1565,38 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
                 if (t.hasSetMethod)
                     expr = t.name + "._set_impl(" + ref + ", " + expandMacrosIn(file, line, endstrip(rhs)) + ")";
                 break;
+            case "ref":
+                expr = ref;
+                break;
         }
-        if (expr == "")
-            return nomatch; // Issue #6: Warning desired
+        if (expr == "") {
+            warning(file, line, "No operation " + operation + " allowed");
+            return nomatch;
+        }
         // Issue #16: Parens interact with semicolon insertion.
         //expr = `(${expr})`;
         return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
 }
-// Issue #20: for fields within a structure, operation could be ref, too.
 function arrMacro(file, line, s, p, ms) {
     var m = ms[0];
     var typeName = ms[1];
-    var operation = ms[2];
-    var field = ms[3];
+    var qualifier = ms[2];
+    var field = ms[3] ? ms[3].substring(1) : "";
+    var operation = ms[4];
     var nomatch = [s, p + m.length];
+    if (operation == "get" || operation == "set")
+        throw new ProgramError(file, line, "Use 'at' and 'setAt' on Arrays");
+    if (operation == "at")
+        operation = "get";
+    if (operation == "setAt")
+        operation = "set";
     var type = findType(typeName);
     if (!type)
         return nomatch;
     var pp = new ParamParser(file, line, s, p + m.length);
     var as = (pp).allArgs();
-    if (OpAttr[operation].arity + 1 != as.length) {
+    if (as.length != OpAttr[operation].arity + 1) {
         warning(file, line, "Wrong arity for accessor " + operation + " / " + as.length);
         return nomatch;
     }
@@ -1401,41 +1619,45 @@ function arrMacro(file, line, s, p, ms) {
         ref = "(" + ref + "+" + fld.offset + ")";
         type = fld.type;
     }
+    if (operation == "ref") {
+        var left = s.substring(0, p);
+        return [left + ref + s.substring(pp.where),
+            left.length + ref.length];
+    }
     return loadFromRef(file, line, ref, type, s, s.substring(0, p), operation, pp, as[2], as[3], nomatch);
 }
 // Since @new is new syntax, we throw errors for all misuse.
 function newMacro(file, line, s, p, ms) {
     var m = ms[0];
-    var arrayType = ms[1];
-    var classType = ms[2];
+    var baseType = ms[1];
+    var qualifier = ms[2];
+    var isArray = ms[3] == "Array";
     var left = s.substring(0, p);
-    if (classType !== undefined) {
-        var t_1 = knownTypes.get(classType);
-        if (!t_1)
-            throw new ProgramError(file, line, "Unknown type argument to @new: " + classType);
-        // NOTE, parens removed here
-        // Issue #16: Watch it: Parens interact with semicolon insertion.
-        var expr_1 = classType + ".initInstance(FlatJS.allocOrThrow(" + t_1.size + "," + t_1.align + "))";
+    // Issue #27 - implement this.
+    if (qualifier)
+        throw new InternalError("Qualifiers on array @new not yet implemented");
+    var t = knownTypes.get(baseType);
+    if (!t)
+        throw new ProgramError(file, line, "Unknown type argument to @new: " + baseType);
+    if (!isArray) {
+        var expr_1 = "FlatJS.allocOrThrow(" + t.size + "," + t.align + ")";
+        if (t.kind == DefnKind.Class) {
+            // NOTE, parens removed here
+            // Issue #16: Watch it: Parens interact with semicolon insertion.
+            expr_1 = baseType + ".initInstance(" + expr_1 + ")";
+        }
         return [left + expr_1 + s.substring(p + m.length),
             left.length + expr_1.length];
     }
     var pp = new ParamParser(file, line, s, p + m.length);
     var as = pp.allArgs();
     if (as.length != 1)
-        throw new ProgramError(file, line, "Wrong number of arguments to @new array(" + arrayType + ")");
-    var t = findType(arrayType);
-    if (!t)
-        throw new ProgramError(file, line, "Unknown type argument to @new array: " + arrayType);
+        throw new ProgramError(file, line, "Wrong number of arguments to @new " + baseType + ".Array");
     // NOTE, parens removed here
     // Issue #16: Watch it: Parens interact with semicolon insertion.
     var expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(file, line, endstrip(as[0])) + ", " + t.elementAlign + ")";
     return [left + expr + s.substring(pp.where),
         left.length + expr.length];
-}
-function findType(name) {
-    if (!knownTypes.test(name))
-        throw new InternalError("Unknown type in sizeofType: " + name);
-    return knownTypes.get(name);
 }
 // This can also check if x is already properly parenthesized, though that
 // involves counting parens, at least trivially (and then does it matter?).
@@ -1446,18 +1668,5 @@ function endstrip(x) {
     if (/^[a-zA-Z0-9]+$/.test(x))
         return x;
     return "(" + x + ")";
-}
-function log2(x) {
-    if (x <= 0)
-        throw new InternalError("log2: " + x);
-    var i = 0;
-    while (x > 1) {
-        i++;
-        x >>= 1;
-    }
-    return i;
-}
-function warning(file, line, msg) {
-    console.log(file + ":" + line + ": Warning: " + msg);
 }
 main(process.argv.slice(2));

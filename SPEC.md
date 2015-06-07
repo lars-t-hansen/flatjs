@@ -6,23 +6,25 @@ FlatJS is a "language fragment" layered on JavaScript (and JS dialects)
 that allows programs to use flat memory (ArrayBuffer and SharedArrayBuffer)
 conveniently with good performance.
 
-FlatJS provides structs, classes, and arrays within flat memory, as well
-as atomic and synchronic fields when using shared memory.  There is also
-some support for SIMD values.  Objects in flat memory are manually
-managed and represented in JavaScript as pointers into the shared
-memory (ie, integer addresses), not as native JavaScript objects.
-Virtual methods are provided for on class instances.
+FlatJS provides structs, classes, and arrays within flat memory, as
+well as atomic and synchronic fields when using shared memory.  There
+is support for SIMD values.  Objects in flat memory are manually
+managed and normally represented in JavaScript as pointers into the
+shared memory (ie, integer addresses), not as native JavaScript
+objects.  Virtual methods are provided for on class instances.
 
-FlatJS is a fairly static language and is implemented as a preprocessor
-that translates  JavaScript+FlatJS into plain JavaScript.
+FlatJS is a static language and is implemented as a preprocessor that
+translates JavaScript+FlatJS into plain JavaScript.
 
-The following is the bare specification.  Full programs are in test/
-and demo/.
+A slightly more dynamic layer sits on top of the static layer,
+allowing objects in flat memory to be exposed as JavaScript classes
+within a single JavaScript context.
+
 
 ## Caveats
 
 For ease of processing *only*, the syntax is currently line-oriented:
-Line breaks are explicit in the grammars below and some "@" characters
+Line breaks are explicit in the grammars below and some ```@``` characters
 appear here and there to make recognition easier.  Please don't get
 hung up on this, it's mostly a matter of programming to fix it but that
 is not my focus right now.
@@ -32,7 +34,9 @@ matchers and an unforgiving, context-insensitive, nonhygienic macro
 expander.  Occasionally this leads to problems.  Some things to watch
 out for:
 
-* Do not use expressions containing strings, comments, or regular expressions
+* Treat all operation names (get, set, at, setAt, ref, add, etc, see below)
+  as reserved words - do not name your fields with those identifiers.
+* Do not use expressions containing template strings or regular expressions
   in the arguments to accessor macros (including array accessors).
 * Do not split calls to accessors across multiple source lines, because
   frequently the translator must scan for the end of the call
@@ -40,18 +44,22 @@ out for:
   on the same line as the assignment operator.
 * Occasionally, the translator fails to parenthesize code correctly because
   it can't insert parentheses blindly as that interacts badly with
-  automatic semicolon insertion (yay JavaScript).
-
+  automatic semicolon insertion (yay JavaScript).  When in doubt, use
+  semicolons.
 
 Failures to obey these rules will sometimes lead to mysterious parsing
 and runtime errors.  A look at the generated code is usually enough to
 figure out what's going on; problems tend to be local.
+
+It's a goal to make the macro substitution more reliable.
+
 
 ## Programs
 
 A program comprises a set of files that are processed together by the FlatJS
 compiler.  In a Web context, all the files loaded into a tab, or all the files
 loaded into a worker, would normally be processed together.
+
 
 ## Types
 
@@ -66,17 +74,20 @@ order and in any file of the program.
 Within the bodies of methods, 'this' has an undetermined binding (for now)
 and should not be referenced.
 
+
 ## Primitive types
 
 There are predefined global type objects with the following names: *int8*, *uint8*,
 *int16*, *uint16*, *int32*, *uint32*, *float32*, *float64*, *int32x4*,
 *float32x4*, and *float64x2*.
 
-Each predefined type object has three properties:
+Each predefined type object T has five properties:
 
-* NAME is the name of the type (a string)
-* SIZE is the size in bytes of the type
-* ALIGN is the required alignment for the type
+* T.NAME is the name of the type (a string)
+* T.SIZE is the size in bytes of the type
+* T.ALIGN is the required alignment for the type
+* T.get(self) => value of a cell of the type
+* T.set(self, v) => set the value of a cell of the type
 
 ## Struct types
 
@@ -96,26 +107,23 @@ with named, mutable fields.
 
   Comment ::= "//" Not-EOL*
 
-  Type ::= AtomicType | ValType | ArrayType
-  AtomicType ::= ("atomic" | "synchronic") ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32")
-  ValType ::= "int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32"
+  Type ::= ValType | ArrayType
+  ValType ::= ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32") (".atomic" | ".synchronic")?
             | "float32" | "float64"
 	    | "int32x4" | "float32x4" | "float64x2"
             | Id
-  ArrayType ::= array(ValType)
+  ArrayType ::= ValType ".Array"
 
   Struct-Method ::= "@get" "(" "SELF" ")" Function-body
                   | "@set" "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
 
   Parameter ::= Id (":" Tokens-except-comma-or-rightparen )?
 
-  Id ::= [A-Za-z][A-Za-z0-9]*
+  Id ::= [A-Za-z_][A-Za-z0-9_]*
 ```
 
 Note the following:
 
-* Underscore is not currently a legal character in an Id.  That is because the
-  underscore is used as part of the macro syntax.
 * The annotation on the Parameter is not used by FlatJS, but is allowed in order
   to interoperate with TypeScript.
 * The restriction of properties before methods is a matter of economizing on the
@@ -132,6 +140,11 @@ outer structure that contains the fields of the nested struct.  No struct
 may in this way include itself.
 
 
+### Dynamic semantics
+
+Within the body of a method, "this" denotes the type object carrying
+the method.
+
 ### Translation
 
 For a struct type named R, with field names F1 .. Fn, the following
@@ -142,7 +155,8 @@ the memory.
 
 #### Global value properties
 
-R is a global "const" holding an object designating the type.
+R is a global variable holding a function object designating the type.
+See "JavaScript front objects", later.
 
 R.SIZE is the size in bytes of R, rounded up such that an array of R
 structures can be traversed by adding R.SIZE to a pointer to one
@@ -156,49 +170,60 @@ R.NAME is the name of the type R.
 
 #### Global function properties
 
-If a field Fk does not have struct type then the following functions
-are defined:
+Whole-type accessors:
 
-* R.Fk(self) => value of self.Fk field
-* R.set_Fk(self, v) => void; set value of self.Fk field to v
+* R.get(self) => reified value of the structure, 
+* R.set(self, v) => set the value of the structure from a reified value
+
+Field accessors for all field types:
+
+* R.Fk(self) => Shorthand for R.fk.get(self)
+* R.Fk.get(self) => value of self.Fk field
+  If the field is a structure then the getter reifies the structure as a JavaScript object.
+  If the field type T does not have a ```@get``` method then the getter returns a new instance
+  of the JavaScript type R, with properties whose values are the values
+  extracted from the flat object, with standard getters.  If T does have
+  a ```@get``` method then R.Fk(self) invokes that method on SELF.Fk.ref and returns its
+  result.
+* R.Fk.set(self, v) => void; set value of self.Fk field to v.
+  If the field is a structure then the setter is a function that updates the shared object from ```v```.
+  If the field type T does not have a ```@set``` method then this method will set each field
+  of self.Fk in order from same-named properties extracted from ```value```.
+  If T does have a ```@set``` method then this method will invoke that method
+  on SELF.Fk.ref and ```value```.
+* R.Fk.ref(self, v) => reference to the self.Fk field
 
 If a field Fk is designated "atomic" then the getter and setter just
 shown use atomic loads and stores.  In addition, the following atomic
 functions are defined:
   
-* R.compareExchange_Fk(self, o, n) => if the value of self.Fk field is o then store n; return old value
-* R.add_Fk(self, v) => add v to value of self.Fk field; return old value
-* R.sub_Fk(self, v) => subtract v from value of self.Fk field; return old value
-* R.and_Fk(self, v) => and v into value of self.Fk field; return old value
-* R.or_Fk(self, v) => or v into value of self.Fk field; return old value
-* R.xor_Fk(self, v) => xor v to value of self.Fk field; return old value
+* R.Fk.compareExchange(self, o, n) => if the value of self.Fk field is o then store n; return old value
+* R.Fk.add(self, v) => add v to value of self.Fk field; return old value
+* R.Fk.sub(self, v) => subtract v from value of self.Fk field; return old value
+* R.Fk.and(self, v) => and v into value of self.Fk field; return old value
+* R.Fk.or(self, v) => or v into value of self.Fk field; return old value
+* R.Fk.xor(self, v) => xor v to value of self.Fk field; return old value
 
 If a field Fk is designated "synchronic" then the setter and atomics
 just shown are synchronic-aware (every update sends a notification).
 In addition, the following synchronic functions are defined:
 
-* R.expectUpdate_Fk(self, v, t) => void; wait until the value of the 
+* R.Fk.expectUpdate(self, v, t) => void; wait until the value of the 
   self.Fk field is observed not to hold v, or until t milliseconds have passed
-* R.loadWhenEqual_Fk(self, v) => wait until the value of the self.Fk
+* R.Fk.loadWhenEqual(self, v) => wait until the value of the self.Fk
   field is observed to hold v, then return the value of that field
   (which might have changed since it was observed to hold v)
 * R.loadWhenNotEqual_Fk(self, v) => wait until the value of the self.Fk
   field is observed not to hold v, then return the value of that field
   (which might have changed back to v since it was observed)
-* R.notify_Fk(self) => wake all waiters on self.Fk, making them re-check
+* R.Fk.notify(self) => wake all waiters on self.Fk, making them re-check
   their conditions.
 
 If a field Fk has a struct type T with fields G1 .. Gm then the
 following functions are defined:
 
-* R.Fk(self) => if T does not have a @get method then this is undefined.
-  Otherwise, a function that invokes the @get method on a reference to self.Fk.
-* R.set_Fk(self, ...args) => if T does not have a @set method then this
-  is undefined.  Otherwise, a function that invokes the @set method on a
-  reference to self.Fk and ...args
-* R.ref_Fk(self) => A reference to self.FK.
 * Getters, setters, and accessors for fields G1 through Gm within Fk,
-  with the general pattern R.Fk_Gi(self) and R.op_Fk_Gi(self,...), by
+  with the general pattern R.Fk.Gi(self) and R.Fk.Gi.op(self,...), by
   the rules above.
 
 
@@ -219,7 +244,7 @@ by a number of methods:
                 ((Comment | Class-Method) EOL)*
                 "}" "@end" Comment? EOL
 
-  Class-method ::= "@method" Id "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
+  Class-method ::= ("@method"|"@virtual") Id "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
 ```
 
 ### Static semantics
@@ -232,18 +257,19 @@ No field within a class definition must have a name that
 matches any other field or method within the class definition
 or within the definition of any base class.
 
-No method within a class definition must have a name that
-matches any method within the class definition (but it may match a
-method in a base class).
+No method within a class definition must have a name that matches any
+method within the class definition.  However, a method in a class may
+match the name of a method in the base class if they are either both
+designated virtual or if neither is designated virtual.
 
-A method whose name matches the name of a method in a base class
-is said to override the base class method.  Overriding methods
-must have the same signature (number and types of arguments) as
-the overridden method.
+(The case for neither being designated virtual is to accomodate the
+```init``` method.  I suspect that a special-case rule for ```init```
+may be better, but I'm not sure yet.)
 
-The special method called ```init``` is not an overriding method,
-and is not subject to restrictions on signature matching.  (This
-is a hack, it will change.)
+A virtual method whose name matches the name of a method in a base
+class is said to override the base class method.  Overriding methods
+must have the same signature (number and types of arguments) as the
+overridden method.
 
 The first argument to a method is always the keyword SELF.
 
@@ -253,9 +279,9 @@ within the outer class that contains the fields of the nested struct.
 A field of class type gives rise to a pointer field.
 
 The layout of a class is compatible with the layout of its base class:
-any accessor on a field of a base class, and any invoker of
-a method defined on the base class (except ```init```) can be
-used on an instance of the derived class.
+any accessor on a field of a base class, and any invoker of a method
+defined on the base class can be used on an instance of the derived
+class.
 
 
 ### Dynamic semantics
@@ -264,6 +290,11 @@ Before memory for a class instance can be used as a class instance,
 the class's initInstance method must be invoked on the memory. 
 If used, the ```@new``` operator (see below) invokes initInstance
 on behalf of the program.
+
+Within the body of a method, "this" denotes the type object carrying
+the method.  (Thus the calls ```SELF.method(...)``` and
+```this.method(SELF,...)``` are equivalent.)
+
 
 ### Translation
 
@@ -276,7 +307,8 @@ the memory.
 
 #### Global value properties
 
-C is a global "const" holding an object designating the type.
+C is a global variable holding a function object designating the type.
+See "JavaScript front objects", later.
 
 C.SIZE is the size in bytes of C.  Note that since C is a reference
 type, to allocate an "array of C" means to allocate an array of
@@ -290,24 +322,34 @@ C.CLSID for the type ID for the type.
 
 C.BASE for the base type of R, or null.
 
+C.prototype is an instance of the function object designating the base
+type, if there is a base type, otherwise an Object.
+
+NOTE, C.get() and C.set() are not defined, those are defined only on
+value types.
+
+
 #### Global function properties
 
 Getters and setters for fields are translated exactly for structs.
 If class D derives from class B and class B has a field x, then 
 there will be accessors for x defined on D as well.
 
-If a method Mk is defined on class C or inherited from class B, then
-an invoker is defined for Mk on C:
+If a method Mk is defined on class C or is a virtual method inherited
+from class B, then an invoker is defined for Mk on C:
 
 * C.Mk(self, ...)
 
-The invoker will determine the actual type of self and invoke the correct
-method implementation.  self must reference an instance of type C or a
-subclass of C.  The type is determined by consulting a hidden field within
-the instance that contains the class ID of the object.
+The invoker for a virtual method will determine the actual type of
+self and invoke the correct method implementation; the invoker for a
+direct method will just contain the method implementation.
 
-If a method Mk is defined on class C, then an implementation is defined
-for Mk on C:
+self must reference an instance of type C or a subclass of C.  The
+type is determined by consulting a hidden field within the instance
+that contains the class ID of the object.
+
+If a virtual method Mk is defined on class C, then an implementation
+is defined for Mk on C:
 
 * C.Mk_impl(self, ...)
 
@@ -330,17 +372,24 @@ memory for n*int32.SIZE.
 
 Suppose A is some type.
 
-* A.array_get(ptr, i) reads the ith element of an array of A
+* A.Array.at(ptr, i) reads the ith element of an array of A
   whose base address is ptr.  Not bounds checked.  If the base
   type of the array is a structure type this will only work if
   the type has a ```@get``` method.
-* A.array_set(ptr, i, v) writes the ith element of an array of A
+* A.Array.setAt(ptr, i, v) writes the ith element of an array of A
   whose base address is ptr.  Not bounds checked.  If the base
   type of the array is a structure type this will only work if
   the type has an ```@set``` method.
+* A.Array.ref(ptr, i) returns a reference to the ith element.
+* If the base type A is a structure type then the path to a field
+  within the structure can be denoted: A.Array.x.y.at(ptr, i)
+  returns the x.y field of the ith element of the array ptr.
+  Ditto for setAt.
+
+NOTE: Arrays of atomics and synchronics, and operations on those, will appear.
 
 
-## @new macro
+## ```@new``` macro
 
 An instance of the class type may be allocated and initialized with
 the operator-like ```@new``` macro.  Specifically, ```@new T``` for FlatJS class
@@ -348,8 +397,9 @@ type T expands into this:
 ```
   T.initInstance(FlatJS.allocOrThrow(T.SIZE, T.ALIGN))
 ```
+
 An array may also be allocated and initialized with ```@new```.
-Specifically, ```@new array(T,n)``` for type T expands into
+Specifically, ```@new T.Array(n)``` for type T expands into
 this:
 ```
   FlatJS.allocOrThrow(n*<size>, <align>)
@@ -358,6 +408,15 @@ where *size* is int32.SIZE if T is a reference type or T.SIZE
 otherwise, and *align* is int32.ALIGN if T is a reference type
 and T.ALIGN otherwise.
 
+Value types may be allocated with ```@new```, and are
+default-initialized (all zero bits).  ```@new int32``` and ```@new T``` for
+some struct type T expand to this code:
+```
+   FlatJS.allocOrThrow(int32.SIZE, int32.ALIGN)
+   FlatJS.allocOrThrow(T.SIZE, T.ALIGN);
+```
+
+NOTE: Arrays of atomics and synchronics, and operations on those, will appear.
 
 ## SELF accessor macros
 
@@ -388,13 +447,65 @@ Furthermore, if there exists a method Mg and the syntax that is being
 used is SELF.Mg(arg, ...) then this is rewritten as T.Mg(SELF,arg,...).
 
 
-
 ## Global macros
 
 All field accessors to simple fields are macro-expanded at translation time.
 
 Note carefully that the field accessors that are macro-expanded are not,
 in fact, available as properties on the type objects at run-time.
+
+
+## JavaScript front objects
+
+The objects that describe FlatJS types are also JavaScript functions,
+that is, standard JS class types.
+
+These JS types are used in situations where JavaScript objects act as
+front objects or proxies for flat objects, as described next.
+
+Going via the front objects will generally be slower than going
+directly to the flat objects, but provide a better interface to
+JavaScript programs.
+
+
+### Struct front objects
+
+If a struct descriptor object is invoked as a function, it does
+nothing and returns nothing.  If it is invoked as a constructor, it
+returns a completely empty JavaScript object of that JS type.
+
+The default struct getter will return a JavaScript object that is an
+instance of the struct's descriptor object, with fields named by the
+fields of the struct, and field values extracted from the struct.  The
+JS object does not reference the shared struct in any way.
+
+### Class front objects
+
+If a class descriptor object is invoked as a function, it does nothing
+and returns nothing.  If it is invoked as a constructor, it should be
+passed one argument (defaults to NULL), which must be a pointer to a
+shared object of the type denoted by the descriptor or one of its
+subtypes.
+
+The JS front object for a class has a getter called ```pointer``` that
+extracts the pointer stored in the object.  There are no other
+prototype methods, and there are no restrictions on what methods can
+be stored in the prototype.
+
+NOTE: It may be that we want to automatically create proxy methods on
+the prototype for (some) shared object methods and fields.
+
+NOTE: As the constructor for the front object already has a
+definition, any construction protocols for them that pass additional
+arguments will have to be implemented via a static constructor.  This
+is a weakness of the system.  (It's fixable, and may be fixed.)
+
+The front object for a FlatJS class normally holds no values of its
+own except the pointer to the shared object.
+
+If there is a FlatJS class D that has a base class B, then the D
+function's prototype property holds an empty instance of B, that is,
+the "instanceof" operator will function correctly on front objects.
 
 
 ## Environment
@@ -452,15 +563,12 @@ output a file for each input file.
 Type IDs must be unique and invariant across workers, which are all
 running different programs.
 
-A type ID could be the hash value of a string representing the name
-and structure of a type.
+A type ID is the hash value of a string representing the name of a
+type.
 
-If a program has two types with the same type ID then the program
-cannot be translated.  A fix is likely to change the name of one of
+NOTE: If a program has two types with the same type ID then the program
+cannot be translated.  A workaround is to change the name of one of
 the conflicting types.  If this turns out to be a constant problem we
 can introduce a notion of a "brand" on a type which is just a fudge
 factor to make the type IDs work out.  (This scales poorly but is
 probably OK in practice.)
-
-Eg, O>Triangle>Surface>> is a unique identifier but does not help us
-catch errors easily.

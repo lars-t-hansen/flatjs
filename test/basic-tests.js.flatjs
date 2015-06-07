@@ -30,9 +30,9 @@ var glob = 0;
 	SELF.y += 5;		// Shorthand syntax
     }
 
-    @method deep6(SELF) {
-	SELF.set_x(-SELF.x);
-	SELF.set_y(-SELF.y);
+    @virtual deep6(SELF) {
+	SELF.x.set(-SELF.x);
+	SELF.y.set(-SELF.y);
 	SELF.deep7(86);
     }
 
@@ -41,20 +41,28 @@ var glob = 0;
     }
 } @end
 
+assertEq(typeof Point, "function");
+assertEq((new Point) instanceof Point, true);
+
 assertEq(Point.NAME, "Point");
 assertEq(Point.SIZE, 12);	         // White-box, it could be larger
 assertEq(Point.ALIGN, 4);	         // White-box, it could be larger
+assertEq(typeof Point.CLSID, "number");
+assertEq(Point.BASE, null);
 
 var p = @new Point;
-Point.set_x(p, 10);
-Point.set_y(p, 20);
+Point.x.set(p, 10);
+Point.y.set(p, 20);
 assertEq(Point.x(p), 10);
 assertEq(Point.y(p), 20);
+
+var po = new Point(p);
+assertEq(po.pointer, p);
 
 assertEq(FlatJS.identify(p), Point);
 assertEq(Point.CLSID, _mem_int32[p>>2]); // White-box, layout
 
-assertEq(Point.ref_x(p) + int32.SIZE, Point.ref_y(p)); // Gray-box, layout
+assertEq(Point.x.ref(p) + int32.SIZE, Point.y.ref(p)); // Gray-box, layout
 
 Point.deep6(p);
 assertEq(glob, 86);
@@ -71,20 +79,38 @@ assertEq(glob, 86);
 
 // Basic inheritance
 
+var XSELF = { x: 10, z: { ref: -99 } };
+var YSELF = { y: 20, z: { set: function (v) { g_probe2 = v } } };
+var g_probe = 0;
+var g_probe2 = 0;
+var ZSELF = { deep6: function () { g_probe3 = "here"; } };
+var g_probe3 = "there";
+
 @flatjs class Point3D extends Point {
     z:int32
 
     @method init(SELF, x, y, z) {
-	SELF.set_x(x);
-	SELF.set_y(y);
-	SELF.set_z(z);
+	SELF.x.set(x);
+	SELF.y.set(y);
+	SELF.z.set(z);
+	XSELF.x = 37;	        // Should not be expanded
+	YSELF.y = XSELF.x;	// Ditto
+	g_probe = XSELF.z.ref;	// Ditto
+	YSELF.z.set(10);	// Ditto
+	ZSELF.deep6();		// Ditto
 	return SELF;
     }
 
-    @method deep6(SELF) {	// Override
+    @virtual deep6(SELF) {	// Override
 	SELF.z = -SELF.z;	// Alternate syntax
     }
 } @end
+
+assertEq(Point3D.NAME, "Point3D");
+
+assertEq(typeof Point3D, "function");
+assertEq((new Point3D) instanceof Point3D, true);
+assertEq((new Point3D) instanceof Point, true);
 
 var q = Point3D.init(@new Point3D, 5, 7, 8);
 assertEq(Point.x(q), 5);
@@ -92,6 +118,15 @@ assertEq(Point.y(q), 7);
 assertEq(Point3D.x(q), 5);
 assertEq(Point3D.y(q), 7);
 assertEq(Point3D.z(q), 8);
+
+assertEq(XSELF.x, 37);
+assertEq(YSELF.y, 37);
+assertEq(g_probe, -99);
+assertEq(g_probe2, 10);
+assertEq(g_probe3, "here");
+
+var qo = new Point3D(q);
+assertEq(qo.pointer, q);
 
 // Virtual calls
 
@@ -115,8 +150,8 @@ assertEq(Point3D.BASE, Point);
     y:int32;
 
     @set(SELF, v) {
-	SELF.set_x(v.x);
-	SELF.set_y(v.y);
+	SELF.x.set(v.x);
+	SELF.y.set(v.y);
     }
     @get(SELF) {
 	return {x:SELF.x, y:SELF.y};
@@ -125,6 +160,10 @@ assertEq(Point3D.BASE, Point);
 
 assertEq(Pair.SIZE, 16);
 assertEq(Pair.ALIGN, 8);	// White-box, it could be larger
+assertEq(Pair.NAME, "Pair");
+
+assertEq(typeof Pair, "function");
+assertEq((new Pair) instanceof Pair, true);
 
 // Structure fields within classes
 
@@ -136,51 +175,93 @@ assertEq(Pair.ALIGN, 8);	// White-box, it could be larger
 } @end
 
 var pr = @new PairBox;
-PairBox.set_p_x(pr, 10);
-PairBox.set_p_y(pr, 20);
+PairBox.p.x.set(pr, 10);
+PairBox.p.y.set(pr, 20);
 
-PairBox.set_pad1(pr, 1);
-PairBox.set_pad2(pr, 2);
-PairBox.set_pad3(pr, 3);
+PairBox.pad1.set(pr, 1);
+PairBox.pad2.set(pr, 2);
+PairBox.pad3.set(pr, 3);
 
-assertEq(PairBox.ref_pad1(pr), pr+4); // White-box, layout
+assertEq(PairBox.pad1.ref(pr), pr+4); // White-box, layout
 
-var ppr = PairBox.ref_p(pr);
-assertEq(Pair.ref_x(ppr) - ppr, 0); // Well-defined
-assertEq(Pair.ref_y(ppr) - ppr, 8); // White-box, it could be larger though shouldn't
+var ppr = PairBox.p.ref(pr);
+assertEq(Pair.x.ref(ppr) - ppr, 0); // Well-defined
+assertEq(Pair.y.ref(ppr) - ppr, 8); // White-box, it could be larger though shouldn't
 
-assertEq(PairBox.p_x(pr), 10);
-assertEq(PairBox.p_y(pr), 20);
+assertEq(PairBox.p.x(pr), 10);
+assertEq(PairBox.p.y(pr), 20);
 
 assertEq(PairBox.pad1(pr), 1);
 assertEq(PairBox.pad2(pr), 2);
 assertEq(PairBox.pad3(pr), 3);
 
-var ia = @new array(int32, 7);
+var ia = @new int32.Array(7);
 for ( var i=0 ; i < 7 ; i++ )
-    int32.array_set(ia, i, -i);
+    int32.Array.setAt(ia, i, -i);
 
 for ( var i=0 ; i < 7 ; i++ )
-    assertEq(int32.array_get(ia, i), -i|0);
+    assertEq(int32.Array.at(ia, i), -i|0);
 
-var pa = @new array(Pair, 4);
+var iar = int32.Array.ref(ia, 3);
+assertEq(iar, ia+3*int32.SIZE);	// White-box?  Layout.
+
+// This also tests comments within parameter lists
+var pa = @new Pair.Array(4);
 for ( var i=0 ; i < 4 ; i++ ) {
-    Pair.array_set_x(pa, i, i);
-    Pair.array_set_y(pa, i, -i);
+    Pair.Array.x.setAt(pa, i, /* value */ i);
+    Pair.Array.y.setAt(pa, i, /* value */ -i);
 }
 
 for ( var i=0 ; i < 4 ; i++ ) {
-    assertEq(Pair.array_get_x(pa, i), i);
-    assertEq(Pair.array_get_y(pa, i), -i|0);
+    assertEq(Pair.Array.x.at(pa, i), i);
+    assertEq(Pair.Array.y.at(pa, i), -i|0);
 }
 
 for ( var i=0 ; i < 4 ; i++ )
-    var v = Pair.array_set(pa, i, {x:i+5, y:i-5});
+    var v = Pair.Array.setAt(pa, i, {x:i+5, y:i-5});
 
 for ( var i=0 ; i < 4 ; i++ ) {
-    var v = Pair.array_get(pa, i);
+    var v = Pair.Array.at(pa, i);
     assertEq(v.x, i+5);
     assertEq(v.y, i-5);
 }
+
+var xr = Pair.Array.ref(pa, 4);
+assertEq(xr, pa+4*Pair.SIZE);	// White-box?  Layout.
+
+// This tests strings within parameter lists.  Conversion should let
+// the program run.
+Pair.Array.x.setAt(pa, i, "37\"42");
+
+@flatjs class WithArray {
+    xs : int32.Array
+} @end
+
+// Default getter and setter
+
+@flatjs struct Pair2 {
+    x:float64;
+    y:int32;
+} @end
+
+@flatjs class Pair2Box {
+    p: Pair2;
+} @end
+
+var p2 = @new Pair2Box;
+Pair2Box.p.set(p2, { x:-1.5, y:37} );
+assertEq(Pair2Box.p(p2).x, -1.5);
+assertEq(Pair2Box.p(p2).y, 37);
+
+// Alloc primitive types
+
+var ip = @new int32;
+int32.set(ip,12);
+assertEq(int32.get(ip), 12);
+
+var p2p = @new Pair2;
+Pair2.set(p2p, {x:-2.2, y:42});
+assertEq(Pair2.get(p2p).x, -2.2);
+assertEq(Pair2.get(p2p).y, 42);
 
 print("Done");

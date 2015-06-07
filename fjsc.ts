@@ -1,4 +1,4 @@
-/* -*- mode: javascript -*- */
+/* -*- mode: javascript; electric-indent-local-mode: nil -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -168,6 +168,13 @@ class ClassDefn extends UserDefn {
 		return true;
 	return false;
     }
+
+    getMethod(name:string):Method {
+	for ( let m of this.methods )
+	    if (m.name == name)
+		return m;
+	return null;
+    }
 }
 
 class Virtual {
@@ -200,9 +207,7 @@ class VirtualMethodIterator {
 		continue;
 	    }
 	    let m = this.cls.methods[this.i++];
-	    if (m.kind != MethodKind.Virtual) // In the future, we may have non-virtuals
-		continue;
-	    if (m.name == "init") // Not virtual
+	    if (m.kind != MethodKind.Virtual)
 		continue;
 	    if (this.filter.test(m.name))
 		continue;
@@ -277,6 +282,7 @@ class Prop {
 
 enum MethodKind {
     Virtual,
+    NonVirtual,
     Get,
     Set
 }
@@ -389,14 +395,22 @@ class SSet {
     }
 }
 
+class SourceLine {
+    constructor(public file:string, public line:number, public text:string) {}
+}
+
 class Source {
-    constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public lines:string[]) {}
+    constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public lines:SourceLine[]) {}
+
+    allText(): string {
+	return this.lines.map(function (x) { return x.text }).join("\n");
+    }
 }
 
 function CapturedError(name) { this.name = name; }
 CapturedError.prototype = new Error("CapturedError");
 
-function InternalError(msg) { this.message = "Internal error: " + msg; console.log(this.message); }
+function InternalError(msg) { this.message = "Internal error: " + msg; }
 InternalError.prototype = new CapturedError("InternalError");
 
 function UsageError(msg) { this.message = "Usage error: " + msg; }
@@ -410,9 +424,8 @@ const allSources:Source[] = [];
 function main(args: string[]):void {
     try {
 	for ( let input_file of args ) {
-	    if (input_file.length < 10 ||
-		(input_file.slice(-10) != ".js.flatjs" && input_file.slice(-10) != ".ts.flatjs"))
-		throw new UsageError("Bad file name (must be .js.flatjs or .ts.flatjs): " + input_file);
+	    if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
+		throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
 	    let text = fs.readFileSync(input_file, "utf8");
 	    let lines = text.split("\n");
 	    let [defs, residual] = collectDefinitions(input_file, lines);
@@ -423,49 +436,80 @@ function main(args: string[]):void {
 	buildTypeMap();
 	resolveTypeRefs();
 	checkRecursion();
+	checkMethods();
 	layoutTypes();
 	createVirtuals();
+
 	expandSelfAccessors();
 	pasteupTypes();
 	expandGlobalAccessorsAndMacros();
 
 	for ( let s of allSources )
-	    fs.writeFileSync(s.output_file, s.lines.join("\n"), "utf8");
+	    fs.writeFileSync(s.output_file, s.allText(), "utf8");
     }
     catch (e) {
-	if (e instanceof CapturedError)
-	    console.log(e.message);
-	else
-	    throw e;
+	console.log(e.message);
+	//console.log(e);
+	process.exit(1);
     }
 }
 
+function log2(x:number):number {
+    if (x <= 0)
+	throw new InternalError("log2: " + x);
+    let i = 0;
+    while (x > 1) {
+	i++;
+	x >>= 1;
+    }
+    return i;
+}
+
+function warning(file:string, line:number, msg:string):void {
+    console.log(file + ":" + line + ": Warning: " + msg);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+// Parsing
+
 const Ws = "\\s+";
 const Os = "\\s*";
-const Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed
+const Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed yet
 const Lbrace = Os + "\\{";
 const Rbrace = Os + "\\}";
-const Comment = Os + "(?:\\/\\/.*)?";
+const LParen = Os + "\\(";
+const CommentOpt = Os + "(?:\\/\\/.*)?";
+const QualifierOpt = "(?:\\.(atomic|synchronic))?"
+const OpNames = "at|get|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
+const Operation = "(?:\\.(" + OpNames + "))";
+const OperationOpt = Operation + "?";
+const OperationLParen = "(?:\\.(" + OpNames + ")" + LParen + ")";
+const NullaryOperation = "(?:\\.(ref|notify))";
+const Path = "((?:\\." + Id + ")+)";
+const PathLazy = "((?:\\." + Id + ")+?)";
+const PathOpt = "((?:\\." + Id + ")*)";
+const PathOptLazy = "((?:\\." + Id + ")*?)";
+const AssignOp = "(=|\\+=|-=|&=|\\|=|\\^=)(?!=)";
 
 const start_re = new RegExp("^" + Os + "@flatjs" + Ws + "(?:struct|class)" + Ws + "(?:" + Id + ")");
-const end_re = new RegExp("^" + Rbrace + Os + "@end" + Comment + "$");
-const struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + Comment + "$");
-const class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + Comment + "$");
-const special_re = new RegExp("^" + Os + "@(get|set|copy)" + Os + "(\\(" + Os + "SELF.*)$");
-const method_re = new RegExp("^" + Os + "@method" + Ws + "(" + Id + ")" + Os + "(\\(" + Os + "SELF.*)$");
-const blank_re = new RegExp("^" + Os + Comment + "$");
+const end_re = new RegExp("^" + Rbrace + Os + "@end" + CommentOpt + "$");
+const struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + CommentOpt + "$");
+const class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + CommentOpt + "$");
+const special_re = new RegExp("^" + Os + "@(get|set)" + "(" + LParen + Os + "SELF.*)$");
+const method_re = new RegExp("^" + Os + "@(method|virtual)" + Ws + "(" + Id + ")" + "(" + LParen + Os + "SELF.*)$");
+const blank_re = new RegExp("^" + Os + CommentOpt + "$");
 const space_re = new RegExp("^" + Os + "$");
-const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(?:(atomic|synchronic)" + Ws + ")?(" + Id + ")" + Os + ";?" + Comment + "$");
-const aprop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "array" + Os + "\\(" + Os + "(" + Id + ")" + Os + "\\)" + Os + ";?" + Comment + "$");
+const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(" + Id + ")" + QualifierOpt + "(?:\.(Array))?" + Os + ";?" + CommentOpt + "$");
 
-function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string[]] {
+function collectDefinitions(filename:string, lines:string[]):[UserDefn[], SourceLine[]] {
     let defs:UserDefn[] = [];
-    let nlines:string[] = [];
+    let nlines:SourceLine[] = [];
     let i=0, lim=lines.length;
     while (i < lim) {
 	let l = lines[i++];
 	if (!start_re.test(l)) {
-	    nlines.push(l);
+	    nlines.push(new SourceLine(filename, i, l));
 	    continue;
 	}
 
@@ -492,6 +536,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	let mbody:string[] = null;
 	let method_type = MethodKind.Virtual;
 	let method_name = "";
+	let method_line = 0;
 	let method_signature:string[] = null;
 
 	// Do not check for duplicate names here since that needs to
@@ -505,13 +550,14 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		if (kind != "class")
 		    throw new ProgramError(filename, i, "@method is only allowed in classes");
 		if (in_method)
-		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+		    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
 		in_method = true;
-		method_type = MethodKind.Virtual;
-		method_name = m[1];
+		method_line = i;
+		method_type = (m[1] == "method" ? MethodKind.NonVirtual : MethodKind.Virtual);
+		method_name = m[2];
 		// Parse the signature.  Just use the param parser for now,
 		// but note that what we get back will need postprocessing.
-		let pp = new ParamParser(filename, i, m[2], /* skip left paren */ 1);
+		let pp = new ParamParser(filename, i, m[3], /* skip left paren */ 1);
 		let args = pp.allArgs();
 		args.shift();	               // Discard SELF
 		// Issue #15: In principle there are two signatures here: there is the
@@ -519,13 +565,14 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		// virtual, and there is the set of arguments extracted from that,
 		// including any splat.
 		method_signature = args.map(function (x) { return parameterToArgument(filename, i, x) });
-		mbody = [m[2]];
+		mbody = [m[3]];
 	    }
 	    else if (m = special_re.exec(l)) {
 		if (kind != "struct")
 		    throw new ProgramError(filename, i, `@${m[1]} is only allowed in structs`);
 		if (in_method)
-		    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+		    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
+		method_line = i;
 		in_method = true;
 		switch (m[1]) {
 		case "get": method_type = MethodKind.Get; break;
@@ -545,14 +592,11 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 	    }
 	    else if (m = prop_re.exec(l)) {
 		let qual = PropQual.None;
-		switch (m[2]) {
+		switch (m[3]) {
 		case "synchronic": qual = PropQual.Synchronic; break;
 		case "atomic": qual = PropQual.Atomic; break;
 		}
-		properties.push(new Prop(i, m[1], qual, false, m[3]));
-	    }
-	    else if (m = aprop_re.exec(l)) {
-		properties.push(new Prop(i, m[1], PropQual.None, true, m[2]));
+		properties.push(new Prop(i, m[1], qual, m[4] == "Array", m[2]));
 	    }
 	    else if (blank_re.test(l)) {
 	    }
@@ -560,7 +604,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], string
 		throw new ProgramError(filename, i, "Syntax error: Not a property or method: " + l);
 	}
 	if (in_method)
-	    methods.push(new Method(i, method_type, method_name, method_signature, mbody));
+	    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
 
 	if (kind == "class")
 	    defs.push(new ClassDefn(filename, lineno, name, inherit, properties, methods, nlines.length));
@@ -602,7 +646,6 @@ class ParamParser {
 	let sawRightParen = false;
 	let sawComma = false;
 	let fellOff = false;
-	// Issue #7: Really should handle /* .. */ comments
 	// Issue #8: Really should handle regular expressions, but much harder, and somewhat marginal
       loop:
 	for (;;) {
@@ -616,6 +659,15 @@ class ParamParser {
 		if (this.pos < this.lim && this.input.charAt(this.pos) == '/') {
 		    this.done = true;
 		    break loop;
+		}
+		if (this.pos < this.lim && this.input.charAt(this.pos) == '*') {
+		    this.pos++;
+		    for (;;) {
+			if (this.pos == this.lim)
+			    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - still nested within comment.");
+			if (this.input.charAt(this.pos++) == '*' && this.pos < this.lim && this.input.charAt(this.pos) == '/')
+			    break;
+		    }
 		}
 		break;
 	    case ';':
@@ -649,9 +701,24 @@ class ParamParser {
 		depth--;
 		break;
 	    case '\'':
-	    case '"':
-		// Issue #5: implement string support
-		throw new ProgramError(this.file, this.line, "Avoid strings in arguments for now");
+	    case '"': {
+		let c = this.input.charAt(this.pos-1);
+		for (;;) {
+		    if (this.pos == this.lim)
+			throw new ProgramError(this.file, this.line, "Line ended unexpectedly - within a string.");
+		    let d = this.input.charAt(this.pos++);
+		    if (d == c)
+			break;
+		    if (d == '\\') {
+			if (this.pos < this.lim)
+			    this.pos++;
+		    }
+		}
+		break;
+	    }
+	    case '`':
+		// Issue #25: Allow template strings
+		throw new ProgramError(this.file, this.line, "Avoid template strings in arguments for now");
 	    }
 	}
 
@@ -664,7 +731,7 @@ class ParamParser {
 	if (this.done && depth > 0)
 	    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - still nested within parentheses.");
 	if (this.done && this.requireRightParen && !sawRightParen)
-	    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - expected ')'.");
+	    throw new ProgramError(this.file, this.line, "Line ended unexpectedly - expected ')'.  " + this.input);
 
 	return result;
     }
@@ -688,6 +755,18 @@ class ParamParser {
 	return s;
     }
 }
+
+function isInitial(c:string):boolean {
+    return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_';
+}
+
+function isSubsequent(c:string):boolean {
+    return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_';
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+// Type checking
 
 const knownTypes = new SMap<Defn>();
 const knownIds = new SMap<ClassDefn>();
@@ -814,6 +893,34 @@ function checkRecursion():void {
     }
 }
 
+// Ugh, this is wrong for init(), where we want each class to have its
+// own.  Really there's no reason to outlaw same-named methods in base
+// or subclass, except it's confusing to allow it.
+
+function checkMethods():void {
+    for ( let d of userTypes ) {
+	if (d.kind != DefnKind.Class)
+	    continue;
+	let cls = <ClassDefn> d;
+	for ( let m of d.methods ) {
+	    for ( let b=cls.baseTypeRef ; b ; b=b.baseTypeRef ) {
+		let bm = b.getMethod(m.name);
+		if (!bm)
+		    continue;
+		if (m.kind == MethodKind.NonVirtual && bm.kind == MethodKind.Virtual)
+		    throw new ProgramError(cls.file, m.line,
+					   "Non-virtual method " + m.name + " is defined virtual in a base class " + b.name + " (" + b.file + ":" + b.line + ")");
+		if (m.kind == MethodKind.Virtual && bm.kind != MethodKind.Virtual)
+		    throw new ProgramError(cls.file, m.line,
+					   "Virtual method " + m.name + " is defined non-virtual in a base class " + b.name + " (" + b.file + ":" + b.line + ")");
+		if (m.kind == MethodKind.Virtual) {
+		    // Issue #34: check arity of methods, requires parsing parameter lists etc.
+		}
+	    }
+	}
+    }
+}
+
 function layoutTypes():void {
     for ( let d of userTypes ) {
 	if (d.kind == DefnKind.Class)
@@ -880,7 +987,7 @@ function layoutDefn(d:UserDefn, map:SMap<MapEntry>, size:number, align:number):v
 	    let root = p.name;
 	    let mIter = st.map.values();
 	    for ( let fld=mIter.next() ; fld ; fld=mIter.next() ) {
-		let fldname = root + "_" + fld.name;
+		let fldname = root + "." + fld.name;
 		map.put(fldname, new MapEntry(fldname, fld.expand, size + fld.offset, fld.type));
 	    }
 	    size += st.size;
@@ -978,15 +1085,21 @@ function findMethodImplFor(cls:ClassDefn, stopAt:ClassDefn, name:string):string 
     throw new InternalError("Method not found: " + name);
 }
 
+function findType(name:string):Defn {
+    if (!knownTypes.test(name))
+	throw new InternalError("Unknown type in sizeofType: " + name);
+    return knownTypes.get(name);
+}
 
-// Issue #17: This will also match bogus things like XSELF, because
-// there's no reliable left-context handling.  Need to add
-// programmatic guards for that.
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+// Macro expansion and pasteup
 
-const self_getter_re = /SELF\.(?:ref_|notify_)?[a-zA-Z0-9_]+/g;
-const self_accessor_re = /SELF\.(?:set_|add_|sub_|or_|compareExchange_|loadWhenEqual_|loadWhenNotEqual_|expectUpdate_)[a-zA-Z0-9_]+\s*\(/g;
-const self_invoke_re = /SELF\.[a-zA-Z0-9]+\s*\(/g;
-const self_setter_re = /SELF\.([a-zA-Z0-9_]+)\s*(=|\+=|-=|&=|\|=|\^=)(?!=)\s*/g;
+const self_getter1_re = new RegExp("SELF" + Path + NullaryOperation, "g");
+const self_getter2_re = new RegExp("SELF" + Path, "g");
+const self_accessor_re = new RegExp("SELF" + Path + OperationLParen, "g");
+const self_setter_re = new RegExp("SELF" + Path + Os + AssignOp + Os, "g");
+const self_invoke_re = new RegExp("SELF\\.(" + Id + ")" + LParen, "g");
 
 // Name validity will be checked on the next expansion pass.
 
@@ -997,17 +1110,27 @@ function expandSelfAccessors():void {
 	    for ( let k=0 ; k < body.length ; k++ ) {
 		body[k] = myExec(t.file, t.line, self_setter_re,
 				 function (file:string, line:number, s:string, p:number, m:RegExpExecArray):[string,number] {
+				     if (p > 0 && isSubsequent(s.charAt(p-1))) return [s, p+m.length];
 				     return replaceSetterShorthand(file, line, s, p, m, t);
 				 },
 				 body[k]);
-		body[k] = body[k].replace(self_accessor_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "SELF, ";
+		body[k] = body[k].replace(self_accessor_re, function (m, path, operation, p, s) {
+		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
+		    return t.name + path + "." + operation + "(SELF, ";
 		});
-		body[k] = body[k].replace(self_invoke_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "SELF, ";
+		body[k] = body[k].replace(self_invoke_re, function (m, id, p, s) {
+		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
+		    var pp = new ParamParser(t.file, t.line, s, p+m.length);
+		    var args = pp.allArgs();
+		    return t.name + "." + id + "(SELF" + (args.length > 0 ? ", " : " ");
 		});
-		body[k] = body[k].replace(self_getter_re, function (m, p, s) {
-		    return t.name + "." + m.substring(5) + "(SELF)";
+		body[k] = body[k].replace(self_getter1_re, function (m, path, operation, p, s) {
+		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
+		    return t.name + path + "." + operation + "(SELF)";
+		});
+		body[k] = body[k].replace(self_getter2_re, function (m, path, p, s) {
+		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
+		    return t.name + path + "(SELF)";
 		});
 	    }
 	}
@@ -1040,34 +1163,61 @@ const AssignmentOps =
 
 function replaceSetterShorthand(file:string, line:number, s:string, p:number, ms:RegExpExecArray, t:UserDefn):[string,number] {
     //return [s, p+m.length];
+    let m = ms[0];
+    let path = ms[1];
+    let operation = ms[2];
     let left = s.substring(0,p);
-    let pp = new ParamParser(file, line, s, p+ms[0].length, false, true);
+    let pp = new ParamParser(file, line, s, p+m.length, false, true);
     let rhs = pp.nextArg();
     if (!rhs)
         throw new ProgramError(file, line, "Missing right-hand-side expression in assignment");
     // Be sure to re-expand the RHS.
-    let substitution_left = `${left} ${t.name}.${AssignmentOps[ms[2]]}_${ms[1]}(SELF, `;
+    let substitution_left = `${left} ${t.name}${path}.${AssignmentOps[operation]}(SELF, `;
     return [`${substitution_left} ${rhs})${pp.sawSemi ? ';' : ''} ${s.substring(pp.where)}`,
 	    substitution_left.length];
 }
 
+function linePusher(info:() => [string,number], nlines:SourceLine[]): (string) => void {
+    return function (text:string):void {
+	let [file,line] = info();
+	nlines.push(new SourceLine(file, line, text));
+    }
+}
+
 function pasteupTypes():void {
+    var emitFn = "";		// ES5 workaround - would otherwise be local to inner "for" loop
+    var emitLine = 0;		// ditto
     for ( let source of allSources ) {
 	let defs = source.defs;
 	let lines = source.lines;
-	let nlines: string[] = [];
+	let nlines: SourceLine[] = [];
 	let k = 0;
 	for ( let d of defs ) {
 	    while (k < d.origin && k < lines.length)
 		nlines.push(lines[k++]);
-	    nlines.push("const " + d.name + " = {");
-	    nlines.push("  NAME: \"" + d.name + "\",");
-	    nlines.push("  SIZE: " + d.size + ",");
-	    nlines.push("  ALIGN: " + d.align + ",");
+
+	    let push = linePusher(function ():[string,number] { return [emitFn, emitLine++] }, nlines);
+
+	    emitFn = d.file + "[class definition]";
+	    emitLine = d.line;
+	    if (d.kind == DefnKind.Class)
+		push("function " + d.name + "(p) { this._pointer = (p|0); }");
+	    else
+		push("function " + d.name + "() {}");
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
-		nlines.push("  CLSID: " + cls.classId + ",");
-		nlines.push("  get BASE() { return " + (cls.baseName ? cls.baseName : "null") + "; },");
+		if (cls.baseName)
+		    push(d.name + ".prototype = new " + cls.baseName + ";");
+		else
+		    push("Object.defineProperty(" + d.name + ".prototype, 'pointer', { get: function () { return this._pointer } });");
+	    }
+	    push(d.name + ".NAME = \"" + d.name + "\";");
+	    push(d.name + ".SIZE = " + d.size + ";");
+	    push(d.name + ".ALIGN = " + d.align + ";");
+	    if (d.kind == DefnKind.Class) {
+		let cls = <ClassDefn> d;
+		push(d.name + ".CLSID = " + cls.classId + ";");
+		push("Object.defineProperty(" + d.name + ", 'BASE', {get: function () { return " + (cls.baseName ? cls.baseName : "null") + "; }});");
 	    }
 
 	    // Now do methods.
@@ -1075,18 +1225,32 @@ function pasteupTypes():void {
 	    // Implementation methods are emitted directly in the defining type, with a name suffix _impl.
 	    // For struct methods, the name is "_get_impl", "_set_impl", or "_copy_impl".
 
+	    let haveSetter = false;
+	    let haveGetter = false;
 	    for ( let m of d.methods ) {
 		let name = m.name;
 		if (name == "") {
 		    switch (m.kind) {
-		    case MethodKind.Get: name = "_get_impl"; break;
-		    case MethodKind.Set: name = "_set_impl"; break;
+		    case MethodKind.Get:
+			if (haveGetter)
+			    throw new ProgramError(d.file, m.line, "Duplicate struct getter");
+			name = "_get_impl";
+			haveGetter = true;
+			break;
+		    case MethodKind.Set:
+			if (haveSetter)
+			    throw new ProgramError(d.file, m.line, "Duplicate struct setter");
+			name = "_set_impl";
+			haveSetter = true;
+			break;
 		    }
 		}
-		else if (name == "init")
+		else if (m.kind == MethodKind.NonVirtual)
 		    ;
 		else
 		    name += "_impl";
+		emitFn = d.file + "[method " + name + "]";
+		emitLine = m.line;
 		let body = m.body;
 		// Formatting: useful to strip all trailing blank lines from
 		// the body first.
@@ -1094,14 +1258,39 @@ function pasteupTypes():void {
 		while (last > 0 && /^\s*$/.test(body[last]))
 		    last--;
 		if (last == 0)
-		    nlines.push("  " + name + " : function " + body[0]);
+		    push(d.name + "." + name + " = function " + body[0]);
 		else {
-		    nlines.push("  " + name + " : function " + body[0]);
+		    push(d.name + "." + name + " = function " + body[0]);
 		    for ( let x=1; x < last ; x++ )
-			nlines.push(body[x]);
-		    nlines.push(body[last]);
+			push(body[x]);
+		    push(body[last]);
 		}
-		nlines.push(","); // Gross hack, but if a comment is the last line of the body then necessary
+	    }
+
+	    // Now default methods, if appropriate.
+
+	    if (d.kind == DefnKind.Struct) {
+		var struct = <StructDefn> d;
+		if (!haveGetter) {
+		    push(d.name + "._get_impl = function (SELF) {");
+		    push("  var v = new " + d.name + ";");
+		    // Use longhand for access, since self accessors are expanded before pasteup.
+		    // TODO: Would be useful to fix that.
+		    for ( var p of d.props )
+			push("  v." + p.name + " = " + d.name + "." + p.name + "(SELF);");
+		    push("  return v;");
+		    push("}");
+		    struct.hasGetMethod = true;
+		}
+
+		if (!haveSetter) {
+		    push(d.name + "._set_impl = function (SELF, v) {");
+		    // TODO: as above.
+		    for ( var p of d.props )
+			push("  " + d.name + "." + p.name + ".set(SELF, v." + p.name + ");");
+		    push("}");
+		    struct.hasSetMethod = true;
+		}
 	    }
 
 	    // Now do vtable, if appropriate.
@@ -1109,21 +1298,24 @@ function pasteupTypes():void {
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
 		for ( let virtual of cls.vtable ) {
+		    // Shouldn't matter much
+		    emitFn = d.file + "[vtable " + virtual.name + "]";
+		    emitLine = d.line;
 		    let signature = virtual.signature();
-		    nlines.push(`${virtual.name} : function (SELF ${signature}) {`);
-		    nlines.push("  switch (_mem_int32[SELF>>2]) {");
+		    push(d.name + "." + virtual.name + " = function (SELF " + signature + ") {");
+		    push("  switch (_mem_int32[SELF>>2]) {");
 		    let kv = virtual.reverseCases.keysValues();
 		    for ( let [name,cases]=kv.next() ; name ; [name,cases]=kv.next() ) {
 			for ( let c of cases )
-			    nlines.push(`    case ${c}:`);
-			nlines.push(`      return ${name}(SELF ${signature});`);
+			    push(`    case ${c}:`);
+			push(`      return ${name}(SELF ${signature});`);
 		    }
-		    nlines.push("    default:");
-		    nlines.push("      " + (virtual.default_ ?
-					    `return ${virtual.default_}(SELF ${signature})` :
-					    "throw FlatJS._badType(SELF)") + ";");
-		    nlines.push("  }");
-		    nlines.push("},");
+		    push("    default:");
+		    push("      " + (virtual.default_ ?
+				     `return ${virtual.default_}(SELF ${signature})` :
+				     "throw FlatJS._badType(SELF)") + ";");
+		    push("  }");
+		    push("}");
 		}
 	    }
 
@@ -1131,12 +1323,11 @@ function pasteupTypes():void {
 
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
-		nlines.push("initInstance:function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; },");
+		push(d.name + ".initInstance = function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; }");
 	    }
 
-	    nlines.push("}");
 	    if (d.kind == DefnKind.Class)
-		nlines.push("FlatJS._idToType[" + (<ClassDefn> d).classId + "] = " + d.name + ";");
+		push("FlatJS._idToType[" + (<ClassDefn> d).classId + "] = " + d.name + ";");
 	}
 	while (k < lines.length)
 	    nlines.push(lines[k++]);
@@ -1147,9 +1338,9 @@ function pasteupTypes():void {
 function expandGlobalAccessorsAndMacros():void {
     for ( let source of allSources ) {
 	let lines = source.lines;
-	let nlines: string[] = [];
-	for ( let j=0 ; j < lines.length ; j++ )
-	    nlines.push(expandMacrosIn(source.input_file, j+1, lines[j]))
+	let nlines: SourceLine[] = [];
+	for ( let l of lines )
+	    nlines.push(new SourceLine(l.file, l.line, expandMacrosIn(l.file, l.line, l.text)));
 	source.lines = nlines;
     }
 }
@@ -1158,9 +1349,12 @@ function expandGlobalAccessorsAndMacros():void {
 // represented as a class, with a ton of methods and locals (eg for
 // file and line), performing expansion on one line.
 
-const acc_re = /([A-Za-z][A-Za-z0-9]*)\.(?:(set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)_)?([a-zA-Z0-9_]+)\s*\(/g;
-const arr_re = /([A-Za-z][A-Za-z0-9]*)\.array_(get|set|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify)(?:_([a-zA-Z0-9_]+))?\s*\(/g;
-const new_re = /@new\s+(?:array\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*,|([A-Za-z][A-Za-z0-9]*))/g;
+const new_re = new RegExp("@new\\s+(" + Id + ")" + QualifierOpt + "(?:\\.(Array)" + LParen + ")?", "g");
+
+const acc_re = new RegExp("(" + Id + ")" + PathOptLazy + "(?:" + Operation + "|)" + LParen, "g");
+
+// It would sure be nice to avoid the explicit ".Array" here, but I don't yet know how.
+const arr_re = new RegExp("(" + Id + ")" + QualifierOpt + "\\.Array" + PathOpt + Operation + LParen, "g");
 
 function expandMacrosIn(file:string, line:number, text:string):string {
     return myExec(file, line, new_re, newMacro,
@@ -1207,48 +1401,72 @@ const OpAttr = {
     "compareExchange": { arity: 3, atomic: "compareExchange", synchronic: "_synchronicCompareExchange" },
 };
 
+//    "at": { arity: 1, atomic: "", synchronic: "" }
+
 function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m = ms[0];
     let className = ms[1];
-    let operation = ms[2];
-    let propName = ms[3];
+    let propName = "";
+    let operation = "";
 
     let nomatch:[string,number] = [s, p+m.length];
     let left = s.substring(0,p);
 
-    if (!operation)
-	operation = "get";
+    if (!ms[2] && !ms[3])
+	return nomatch;		// We're looking at something else
+
+    propName = ms[2] ? ms[2].substring(1) : ""; // Strip the leading "."
+    operation = ms[3] ? ms[3] : "get";
+
     let ty = knownTypes.get(className);
-    if (!ty || !(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct))
+    if (!ty)
 	return nomatch;
-    let cls = <UserDefn> ty;
 
-    // findAccessibleFieldFor will vet the operation against the field type,
-    // so atomic/synchronic ops will only be allowed on appropriate types
+    let offset = 0;
+    let targetType: Defn = null;
 
-    let fld = cls.findAccessibleFieldFor(operation, propName);
-    if (!fld) {
-	//console.log("No match for " + className + "  " + operation + "  " + propName);
-	return nomatch;
+    if (propName == "") {
+	if (!(ty.kind == DefnKind.Primitive || ty.kind == DefnKind.Struct))
+	    throw new ProgramError(file, line, "Operation '" + operation + "' without a path requires a value type: " + s);
+	offset = 0;
+	targetType = ty;
     }
+    else {
+	if (!(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct)) {
+	    //throw new ProgramError(file, line, "Operation with a path requires a structured type: " + s);
+	    return nomatch;
+	}
 
-    // Issue #6: Emit warnings for arity abuse, at a minimum.
+	let cls = <UserDefn> ty;
+	// findAccessibleFieldFor will vet the operation against the field type,
+	// so atomic/synchronic ops will only be allowed on appropriate types
+
+	let fld = cls.findAccessibleFieldFor(operation, propName);
+	if (!fld) {
+	    let fld2 = cls.findAccessibleFieldFor("get", propName);
+	    if (fld2)
+		warning(file, line, "No match for " + className + "  " + operation + "  " + propName);
+	    return nomatch;
+	}
+	offset = fld.offset;
+	targetType = fld.type;
+    }
 
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
     if (OpAttr[operation].arity != as.length) {
-	console.log(`Bad accessor arity ${propName} / ${as.length}`);
+	warning(file, line, `Bad accessor arity ${propName} / ${as.length}: ` + s);
 	return nomatch;
     };
 
     // Issue #16: Watch it: Parens interact with semicolon insertion.
-    let ref = `(${expandMacrosIn(file, line, endstrip(as[0]))} + ${fld.offset})`;
+    let ref = `(${expandMacrosIn(file, line, endstrip(as[0]))} + ${offset})`;
     if (operation == "ref") {
 	return [left + ref + s.substring(pp.where),
 		left.length + ref.length];
     }
 
-    return loadFromRef(file, line, ref, fld.type, s, left, operation, pp, as[1], as[2], nomatch);
+    return loadFromRef(file, line, ref, targetType, s, left, operation, pp, as[1], as[2], nomatch);
 }
 
 function loadFromRef(file:string, line:number,
@@ -1333,7 +1551,7 @@ function loadFromRef(file:string, line:number,
 		expr = `FlatJS.${OpAttr[operation].synchronic}(${ref}, ${mem}, ${fieldIndex}, ${rhs}, ${rhs2})`;
 	    break;
 	default:
-	    throw new InternalError("No operator: " + operation + " " + s);
+	    throw new InternalError("No operator: " + operation + " line: " + s);
 	}
 	// Issue #16: Parens interact with semicolon insertion.
 	//expr = `(${expr})`;
@@ -1354,23 +1572,34 @@ function loadFromRef(file:string, line:number,
 	    if (t.hasSetMethod)
 		expr = `${t.name}._set_impl(${ref}, ${expandMacrosIn(file, line, endstrip(rhs))})`;
 	    break;
+	case "ref":
+	    expr = ref;
+	    break;
 	}
-	if (expr == "")
-	    return nomatch;	// Issue #6: Warning desired
+	if (expr == "") {
+	    warning(file, line, "No operation " + operation + " allowed");
+	    return nomatch;
+	}
 	// Issue #16: Parens interact with semicolon insertion.
 	//expr = `(${expr})`;
 	return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
 }
 
-// Issue #20: for fields within a structure, operation could be ref, too.
-
 function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];
     let typeName=ms[1];
-    let operation=ms[2];
-    let field=ms[3];
+    let qualifier=ms[2];
+    let field=ms[3] ? ms[3].substring(1) : "";
+    let operation=ms[4];
     let nomatch:[string,number] = [s,p+m.length];
+
+    if (operation == "get" || operation == "set")
+	throw new ProgramError(file, line, "Use 'at' and 'setAt' on Arrays");
+    if (operation == "at")
+	operation = "get";
+    if (operation == "setAt")
+	operation = "set";
 
     let type = findType(typeName);
     if (!type)
@@ -1379,7 +1608,7 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = (pp).allArgs();
 
-    if (OpAttr[operation].arity+1 != as.length) {
+    if (as.length != OpAttr[operation].arity+1) {
 	warning(file, line, `Wrong arity for accessor ${operation} / ${as.length}`);
 	return nomatch;
     };
@@ -1402,6 +1631,11 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
 	ref = "(" + ref + "+" + fld.offset + ")";
 	type = fld.type;
     }
+    if (operation == "ref") {
+	let left = s.substring(0,p);
+	return [left + ref + s.substring(pp.where),
+		left.length + ref.length];
+    }
 
     return loadFromRef(file, line, ref, type, s, s.substring(0,p), operation, pp, as[2], as[3], nomatch);
 }
@@ -1410,16 +1644,26 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
 
 function newMacro(file, line, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];
-    let arrayType=ms[1];
-    let classType=ms[2];
+    let baseType=ms[1];
+    let qualifier=ms[2];
+    let isArray=ms[3] == "Array";
     let left = s.substring(0,p);
-    if (classType !== undefined) {
-	let t = knownTypes.get(classType);
-	if (!t)
-	    throw new ProgramError(file, line, "Unknown type argument to @new: " + classType);
-	// NOTE, parens removed here
-	// Issue #16: Watch it: Parens interact with semicolon insertion.
-	let expr = classType + ".initInstance(FlatJS.allocOrThrow(" + t.size + "," + t.align + "))";
+
+    // Issue #27 - implement this.
+    if (qualifier)
+	throw new InternalError("Qualifiers on array @new not yet implemented");
+
+    let t = knownTypes.get(baseType);
+    if (!t)
+	throw new ProgramError(file, line, "Unknown type argument to @new: " + baseType);
+
+    if (!isArray) {
+	let expr = "FlatJS.allocOrThrow(" + t.size + "," + t.align + ")";
+	if (t.kind == DefnKind.Class) {
+	    // NOTE, parens removed here
+	    // Issue #16: Watch it: Parens interact with semicolon insertion.
+	    expr = baseType + ".initInstance(" + expr + ")";
+	}
 	return [left + expr + s.substring(p + m.length),
 		left.length + expr.length ];
     }
@@ -1427,22 +1671,13 @@ function newMacro(file, line, s:string, p:number, ms:RegExpExecArray):[string,nu
     let pp = new ParamParser(file, line, s, p+m.length);
     let as = pp.allArgs();
     if (as.length != 1)
-	throw new ProgramError(file, line, "Wrong number of arguments to @new array(" + arrayType + ")");
+	throw new ProgramError(file, line, "Wrong number of arguments to @new " + baseType + ".Array");
 
-    let t = findType(arrayType);
-    if (!t)
-	throw new ProgramError(file, line, "Unknown type argument to @new array: " + arrayType);
     // NOTE, parens removed here
     // Issue #16: Watch it: Parens interact with semicolon insertion.
     let expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(file, line, endstrip(as[0])) + ", " + t.elementAlign + ")";
     return [left + expr + s.substring(pp.where),
 	    left.length + expr.length];
-}
-
-function findType(name:string):Defn {
-    if (!knownTypes.test(name))
-	throw new InternalError("Unknown type in sizeofType: " + name);
-    return knownTypes.get(name);
 }
 
 // This can also check if x is already properly parenthesized, though that
@@ -1455,21 +1690,6 @@ function endstrip(x:string):string {
     if (/^[a-zA-Z0-9]+$/.test(x))
 	return x;
     return "(" + x + ")";
-}
-
-function log2(x:number):number {
-    if (x <= 0)
-	throw new InternalError("log2: " + x);
-    let i = 0;
-    while (x > 1) {
-	i++;
-	x >>= 1;
-    }
-    return i;
-}
-
-function warning(file:string, line:number, msg:string):void {
-    console.log(file + ":" + line + ": Warning: " + msg);
 }
 
 main(process.argv.slice(2));
