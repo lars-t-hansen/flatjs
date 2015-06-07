@@ -747,7 +747,7 @@ var ParamParser = (function () {
                     break;
                 }
                 case '`':
-                    // FIXME
+                    // Issue #25: Allow template strings
                     throw new ProgramError(this.file, this.line, "Avoid template strings in arguments for now");
             }
         }
@@ -1252,7 +1252,7 @@ function pasteupTypes() {
                     push(d.name + "._get_impl = function (SELF) {");
                     push("  var v = new " + d.name + ";");
                     // Use longhand for access, since self accessors are expanded before pasteup.
-                    // FIXME: Would be useful to fix that.
+                    // TODO: Would be useful to fix that.
                     for (var _d = 0, _e = d.props; _d < _e.length; _d++) {
                         var p = _e[_d];
                         push("  v." + p.name + " = " + d.name + "." + p.name + "(SELF);");
@@ -1263,7 +1263,7 @@ function pasteupTypes() {
                 }
                 if (!haveSetter) {
                     push(d.name + "._set_impl = function (SELF, v) {");
-                    // FIXME: as above.
+                    // TODO: as above.
                     for (var _f = 0, _g = d.props; _f < _g.length; _f++) {
                         var p = _g[_f];
                         push("  " + d.name + "." + p.name + ".set(SELF, v." + p.name + ");");
@@ -1538,7 +1538,6 @@ function loadFromRef(file, line, ref, type, s, left, operation, pp, rhs, rhs2, n
         return [left + expr + s.substring(pp.where), left.length + expr.length];
     }
 }
-// Issue #20: for fields within a structure, operation could be ref, too.
 function arrMacro(file, line, s, p, ms) {
     var m = ms[0];
     var typeName = ms[1];
@@ -1594,7 +1593,7 @@ function newMacro(file, line, s, p, ms) {
     var qualifier = ms[2];
     var isArray = ms[3] == "Array";
     var left = s.substring(0, p);
-    // FIXME - implement this.
+    // Issue #27 - implement this.
     if (qualifier)
         throw new InternalError("Qualifiers on array @new not yet implemented");
     var t = knownTypes.get(baseType);

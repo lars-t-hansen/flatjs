@@ -697,7 +697,7 @@ class ParamParser {
 		break;
 	    }
 	    case '`':
-		// FIXME
+		// Issue #25: Allow template strings
 		throw new ProgramError(this.file, this.line, "Avoid template strings in arguments for now");
 	    }
 	}
@@ -882,7 +882,7 @@ function checkMethods():void {
 		    throw new ProgramError(cls.file, m.line,
 					   "Virtual method " + m.name + " is defined non-virtual in a base class " + b.name + " (" + b.file + ":" + b.line + ")");
 		if (m.kind == MethodKind.Virtual) {
-		    // TODO: check arity of methods, requires parsing parameter lists etc.
+		    // Issue #34: check arity of methods, requires parsing parameter lists etc.
 		}
 	    }
 	}
@@ -1233,7 +1233,7 @@ function pasteupTypes():void {
 		    push(d.name + "._get_impl = function (SELF) {");
 		    push("  var v = new " + d.name + ";");
 		    // Use longhand for access, since self accessors are expanded before pasteup.
-		    // FIXME: Would be useful to fix that.
+		    // TODO: Would be useful to fix that.
 		    for ( var p of d.props )
 			push("  v." + p.name + " = " + d.name + "." + p.name + "(SELF);");
 		    push("  return v;");
@@ -1243,7 +1243,7 @@ function pasteupTypes():void {
 
 		if (!haveSetter) {
 		    push(d.name + "._set_impl = function (SELF, v) {");
-		    // FIXME: as above.
+		    // TODO: as above.
 		    for ( var p of d.props )
 			push("  " + d.name + "." + p.name + ".set(SELF, v." + p.name + ");");
 		    push("}");
@@ -1544,8 +1544,6 @@ function loadFromRef(file:string, line:number,
     }
 }
 
-// Issue #20: for fields within a structure, operation could be ref, too.
-
 function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];
     let typeName=ms[1];
@@ -1609,7 +1607,7 @@ function newMacro(file, line, s:string, p:number, ms:RegExpExecArray):[string,nu
     let isArray=ms[3] == "Array";
     let left = s.substring(0,p);
 
-    // FIXME - implement this.
+    // Issue #27 - implement this.
     if (qualifier)
 	throw new InternalError("Qualifiers on array @new not yet implemented");
 
