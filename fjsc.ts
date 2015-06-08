@@ -13,15 +13,13 @@
  *   fjsc input-file ...
  *
  * One output file will be produced for each input file.  Each input
- * file must have extension .xx.flatjs, where x is "js" or "ts".  On
- * output the .flatjs suffix will be stripped.
+ * file must have extension .something.flatjs.  On output the .flatjs
+ * suffix will be stripped.
  *
+ * ---
  *
  * This is source code for TypeScript 1.5 and node.js 0.10 / ECMAScript 5.
- * Tested with tsc 1.5.0-beta and nodejs 0.10.25.
- *
- * To compile:
- *   tsc -t ES5 -m commonjs fjsc.ts
+ * Tested with tsc 1.5.0-beta and nodejs 0.10.25 and 0.12.0, on Linux and Mac OS X.
  */
 
 /// <reference path='typings/node/node.d.ts' />
