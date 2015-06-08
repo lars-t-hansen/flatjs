@@ -18,7 +18,7 @@ var __extends = this.__extends || function (d, b) {
  *   fjsc input-file ...
  *
  * One output file will be produced for each input file.  Each input
- * file must have extension .flat.xx where xx is typically js or ts.
+ * file must have extension .flat_xx where xx is typically js or ts.
  * On output the ".flat" qualifier will be stripped.
  *
  * ---
@@ -493,12 +493,12 @@ function main(args) {
     try {
         for (var _i = 0; _i < args.length; _i++) {
             var input_file = args[_i];
-            if (!(/.\.flat\.[a-zA-Z0-9]+$/.test(input_file)))
-                throw new UsageError("Bad file name (must be *.flat.<extension>): " + input_file);
+            if (!(/.\.flat_[a-zA-Z0-9]+$/.test(input_file)))
+                throw new UsageError("Bad file name (must be *.flat_<extension>): " + input_file);
             var text = fs.readFileSync(input_file, "utf8");
             var lines = text.split("\n");
             var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
-            var output_file = input_file.replace(/\.flat(\.[a-zA-Z0-9]+)$/, "$1");
+            var output_file = input_file.replace(/\.flat_([a-zA-Z0-9]+)$/, ".$1");
             allSources.push(new Source(input_file, output_file, defs, residual));
         }
         buildTypeMap();
