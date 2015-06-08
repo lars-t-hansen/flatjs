@@ -407,17 +407,27 @@ class Source {
     }
 }
 
-function CapturedError(name) { this.name = name; }
-CapturedError.prototype = new Error("CapturedError");
+class CapturedError {
+    constructor(public name:string, public message:string) {}
+}
 
-function InternalError(msg) { this.message = "Internal error: " + msg; }
-InternalError.prototype = new CapturedError("InternalError");
+class InternalError extends CapturedError {
+    constructor(msg:string) {
+	super("InternalError", "Internal error: " + msg);
+    }
+}
 
-function UsageError(msg) { this.message = "Usage error: " + msg; }
-UsageError.prototype = new CapturedError("UsageError");
+class UsageError extends CapturedError {
+    constructor(msg:string) {
+	super("UsageError", "Usage error: " + msg);
+    }
+}
 
-function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; };
-ProgramError.prototype = new CapturedError("ProgramError");
+class ProgramError extends CapturedError {
+    constructor(file:string, line:number, msg:string) {
+	super("ProgramError", file + ":" + line + ": " + msg);
+    }
+}
 
 const allSources:Source[] = [];
 
@@ -448,8 +458,10 @@ function main(args: string[]):void {
 	    fs.writeFileSync(s.output_file, s.allText(), "utf8");
     }
     catch (e) {
-	console.log(e.message);
-	//console.log(e);
+	if (e instanceof CapturedError)
+	    console.log(e.message);
+	else
+	    console.log(e);
 	process.exit(1);
     }
 }
@@ -615,7 +627,7 @@ function collectDefinitions(filename:string, lines:string[]):[UserDefn[], Source
 }
 
 // The input is Id, Id:Blah, or ...Id.  Strip any :Blah annotations.
-function parameterToArgument(file, line, s:string):string {
+function parameterToArgument(file:string, line:number, s:string):string {
     if (/^\s*(?:\.\.\.)[A-Za-z_$][A-Za-z0-9_$]*\s*$/.test(s))
 	return s;
     let m = /^\s*([A-Za-z_\$][A-Za-z0-9_\$]*)\s*:?/.exec(s);
@@ -1177,7 +1189,7 @@ function replaceSetterShorthand(file:string, line:number, s:string, p:number, ms
 	    substitution_left.length];
 }
 
-function linePusher(info:() => [string,number], nlines:SourceLine[]): (string) => void {
+function linePusher(info:() => [string,number], nlines:SourceLine[]): (text:string) => void {
     return function (text:string):void {
 	let [file,line] = info();
 	nlines.push(new SourceLine(file, line, text));
@@ -1642,7 +1654,7 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
 
 // Since @new is new syntax, we throw errors for all misuse.
 
-function newMacro(file, line, s:string, p:number, ms:RegExpExecArray):[string,number] {
+function newMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
     let m=ms[0];
     let baseType=ms[1];
     let qualifier=ms[2];

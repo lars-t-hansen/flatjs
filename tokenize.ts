@@ -45,6 +45,14 @@ enum Token {
     EOI
 };
 
+// Really an object with an optional "value" property and other
+// properties named by one-character strings.  A union type is not
+// quite right, but casts might help.  Or the value property could
+// always be there but its value type could be number|undefined,
+// maybe.
+
+type Trie = any;
+
 const optrie = (function () {
     const operator = {
 	".": Token.Dot,
@@ -97,7 +105,7 @@ const optrie = (function () {
 	"?": Token.Other
     };
 
-    function enter(t, k, v) {
+    function enter(t:Trie, k:string, v:number) {
 	if (k.length == 0) {
 	    t.value = v;
 	    return;
@@ -350,7 +358,7 @@ class Tokenizer {
     }
 
     // Not a nested function because of "this" insanity in JS.
-    private search(t, s:string): [Token, string] {
+    private search(t:Trie, s:string): [Token, string] {
 	if (this.loc == this.end)
 	    return [Token.Unused, ""];
 	let c = this.input.charAt(this.loc);
