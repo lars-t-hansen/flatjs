@@ -461,15 +461,34 @@ var Source = (function () {
     };
     return Source;
 })();
-function CapturedError(name) { this.name = name; }
-CapturedError.prototype = new Error("CapturedError");
-function InternalError(msg) { this.message = "Internal error: " + msg; }
-InternalError.prototype = new CapturedError("InternalError");
-function UsageError(msg) { this.message = "Usage error: " + msg; }
-UsageError.prototype = new CapturedError("UsageError");
-function ProgramError(file, line, msg) { this.message = file + ":" + line + ": " + msg; }
-;
-ProgramError.prototype = new CapturedError("ProgramError");
+var CapturedError = (function () {
+    function CapturedError(name, message) {
+        this.name = name;
+        this.message = message;
+    }
+    return CapturedError;
+})();
+var InternalError = (function (_super) {
+    __extends(InternalError, _super);
+    function InternalError(msg) {
+        _super.call(this, "InternalError", "Internal error: " + msg);
+    }
+    return InternalError;
+})(CapturedError);
+var UsageError = (function (_super) {
+    __extends(UsageError, _super);
+    function UsageError(msg) {
+        _super.call(this, "UsageError", "Usage error: " + msg);
+    }
+    return UsageError;
+})(CapturedError);
+var ProgramError = (function (_super) {
+    __extends(ProgramError, _super);
+    function ProgramError(file, line, msg) {
+        _super.call(this, "ProgramError", file + ":" + line + ": " + msg);
+    }
+    return ProgramError;
+})(CapturedError);
 var allSources = [];
 function main(args) {
     try {
@@ -498,8 +517,10 @@ function main(args) {
         }
     }
     catch (e) {
-        console.log(e.message);
-        //console.log(e);
+        if (e instanceof CapturedError)
+            console.log(e.message);
+        else
+            console.log(e);
         process.exit(1);
     }
 }
