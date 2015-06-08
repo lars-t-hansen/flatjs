@@ -13,8 +13,8 @@
  *   fjsc input-file ...
  *
  * One output file will be produced for each input file.  Each input
- * file must have extension .something.flatjs.  On output the .flatjs
- * suffix will be stripped.
+ * file must have extension .flat.xx where xx is typically js or ts.
+ * On output the ".flat" qualifier will be stripped.
  *
  * ---
  *
@@ -434,12 +434,12 @@ const allSources:Source[] = [];
 function main(args: string[]):void {
     try {
 	for ( let input_file of args ) {
-	    if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
-		throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
+	    if (!(/.\.flat\.[a-zA-Z0-9]+$/.test(input_file)))
+		throw new UsageError("Bad file name (must be *.flat.<extension>): " + input_file);
 	    let text = fs.readFileSync(input_file, "utf8");
 	    let lines = text.split("\n");
 	    let [defs, residual] = collectDefinitions(input_file, lines);
-	    let output_file = input_file.replace(/\.flatjs$/,"");
+	    let output_file = input_file.replace(/\.flat(\.[a-zA-Z0-9]+)$/, "$1");
 	    allSources.push(new Source(input_file, output_file, defs, residual));
 	}
 

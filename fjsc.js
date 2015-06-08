@@ -18,15 +18,13 @@ var __extends = this.__extends || function (d, b) {
  *   fjsc input-file ...
  *
  * One output file will be produced for each input file.  Each input
- * file must have extension .xx.flatjs, where x is "js" or "ts".  On
- * output the .flatjs suffix will be stripped.
+ * file must have extension .flat.xx where xx is typically js or ts.
+ * On output the ".flat" qualifier will be stripped.
  *
+ * ---
  *
  * This is source code for TypeScript 1.5 and node.js 0.10 / ECMAScript 5.
- * Tested with tsc 1.5.0-beta and nodejs 0.10.25.
- *
- * To compile:
- *   tsc -t ES5 -m commonjs fjsc.ts
+ * Tested with tsc 1.5.0-beta and nodejs 0.10.25 and 0.12.0, on Linux and Mac OS X.
  */
 /// <reference path='typings/node/node.d.ts' />
 var fs = require("fs");
@@ -495,12 +493,12 @@ function main(args) {
     try {
         for (var _i = 0; _i < args.length; _i++) {
             var input_file = args[_i];
-            if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
-                throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
+            if (!(/.\.flat\.[a-zA-Z0-9]+$/.test(input_file)))
+                throw new UsageError("Bad file name (must be *.flat.<extension>): " + input_file);
             var text = fs.readFileSync(input_file, "utf8");
             var lines = text.split("\n");
             var _a = collectDefinitions(input_file, lines), defs = _a[0], residual = _a[1];
-            var output_file = input_file.replace(/\.flatjs$/, "");
+            var output_file = input_file.replace(/\.flat(\.[a-zA-Z0-9]+)$/, "$1");
             allSources.push(new Source(input_file, output_file, defs, residual));
         }
         buildTypeMap();
