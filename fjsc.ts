@@ -28,6 +28,8 @@
 
 import fs = require("fs");
 
+const VERSION = "0.5";
+
 enum DefnKind {
     Class,
     Struct,
@@ -454,8 +456,11 @@ function main(args: string[]):void {
 	pasteupTypes();
 	expandGlobalAccessorsAndMacros();
 
-	for ( let s of allSources )
-	    fs.writeFileSync(s.output_file, s.allText(), "utf8");
+	for ( let s of allSources ) {
+	    fs.writeFileSync(s.output_file,
+			     "// Generated from " + s.input_file + " by fjsc " + VERSION + "; github.com/lars-t-hansen/flatjs\n" + s.allText(),
+			     "utf8");
+	}
     }
     catch (e) {
 	if (e instanceof CapturedError)

@@ -30,6 +30,7 @@ var __extends = this.__extends || function (d, b) {
  */
 /// <reference path='typings/node/node.d.ts' />
 var fs = require("fs");
+var VERSION = "0.5";
 var DefnKind;
 (function (DefnKind) {
     DefnKind[DefnKind["Class"] = 0] = "Class";
@@ -513,7 +514,7 @@ function main(args) {
         expandGlobalAccessorsAndMacros();
         for (var _b = 0; _b < allSources.length; _b++) {
             var s = allSources[_b];
-            fs.writeFileSync(s.output_file, s.allText(), "utf8");
+            fs.writeFileSync(s.output_file, "// Generated from " + s.input_file + " by fjsc " + VERSION + "; github.com/lars-t-hansen/flatjs\n" + s.allText(), "utf8");
         }
     }
     catch (e) {
