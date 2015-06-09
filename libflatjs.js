@@ -284,7 +284,7 @@ function _FlatJS_init_sab(flatjs, sab, start, limit, initialize) {
 	throw new Error("Invalid bounds: " + start + " " + limit);
     var len = (limit - start);
     if (len < 16)
-	throw new Error("The memory is too small even for metadata");
+	throw new Error("The memory is too small even for metadata: " + sab.byteLength);
     flatjs.alloc = _FlatJS_alloc_sab;
     _mem_int8 = new SharedInt8Array(sab, start, len);
     _mem_uint8 = new SharedUint8Array(sab, start, len);
