@@ -44,7 +44,7 @@ var FlatJS =
     /*
      * Initialize the local FlatJS instance.
      *
-     * Buffer can be an ArrayBuffer or SharedArrayBuffer.  In the
+     * "buffer" can be an ArrayBuffer or SharedArrayBuffer.  In the
      * latter case, all workers must pass the same buffer during
      * initialization.
      *
@@ -53,17 +53,25 @@ var FlatJS =
      * should not access it directly after using it to initialize
      * the heap.
      *
+     * "start" must be a valid offset within the buffer, it is the
+     * first byte that may be used.
+     *
+     * "limit" must be a valid offset within the buffer, limit-1 is
+     * the last byte that may be used.
+     *
      * "initialize" must be true in exactly one agent and that call
      * must return before any agent can call any other methods on
      * their local FlatJS objects.  Normally, you would allocate your
      * memory in the main thread, call FlatJS.init(buffer, true) in
      * the main thread, and then distribute the buffer to workers.
      */
-    init: function (buffer, initialize) {
+    init: function (buffer, start, limit, initialize) {
+	if (arguments.length < 3)
+	    throw new Error("Required arguments: buffer, start, limit");
 	if (buffer instanceof ArrayBuffer)
-	    _FlatJS_init_ab(this, buffer, initialize);
+	    _FlatJS_init_ab(this, buffer, start, limit, initialize);
 	else if (buffer instanceof SharedArrayBuffer)
-	    _FlatJS_init_sab(this, buffer, initialize);
+	    _FlatJS_init_sab(this, buffer, start, limit, initialize);
 	else
 	    throw new Error("FlatJS can be initialized only on SharedArrayBuffer or ArrayBuffer");
     },
@@ -267,38 +275,50 @@ var FlatJS =
 	   : Date.now.bind(Date))
 };
 
-function _FlatJS_init_sab(flatjs, sab, initialize) {
-    var len = sab.byteLength & ~7;
+function _FlatJS_init_sab(flatjs, sab, start, limit, initialize) {
+    if ((start|0) != start || (limit|0) != limit)
+	throw new Error("Invalid bounds: " + start + " " + limit);
+    start = (start + 7) & ~7;
+    limit = (limit & ~7);
+    if (start < 0 || limit <= start || limit > sab.byteLength)
+	throw new Error("Invalid bounds: " + start + " " + limit);
+    var len = (limit - start);
     if (len < 16)
 	throw new Error("The memory is too small even for metadata");
     flatjs.alloc = _FlatJS_alloc_sab;
-    _mem_int8 = new SharedInt8Array(sab, 0, len);
-    _mem_uint8 = new SharedUint8Array(sab, 0, len);
-    _mem_int16 = new SharedInt16Array(sab, 0, len/2);
-    _mem_uint16 = new SharedUint16Array(sab, 0, len/2);
-    _mem_int32 = new SharedInt32Array(sab, 0, len/4);
-    _mem_uint32 = new SharedUint32Array(sab, 0, len/4);
-    _mem_float32 = new SharedFloat32Array(sab, 0, len/4);
-    _mem_float64 = new SharedFloat64Array(sab, 0, len/8);
+    _mem_int8 = new SharedInt8Array(sab, start, len);
+    _mem_uint8 = new SharedUint8Array(sab, start, len);
+    _mem_int16 = new SharedInt16Array(sab, start, len/2);
+    _mem_uint16 = new SharedUint16Array(sab, start, len/2);
+    _mem_int32 = new SharedInt32Array(sab, start, len/4);
+    _mem_uint32 = new SharedUint32Array(sab, start, len/4);
+    _mem_float32 = new SharedFloat32Array(sab, start, len/4);
+    _mem_float64 = new SharedFloat64Array(sab, start, len/8);
     if (initialize) {
 	_mem_int32[2] = len;
 	Atomics.store(_mem_int32, 1, 16);
     }
 }
 
-function _FlatJS_init_ab(flatjs, ab, initialize) {
-    var len = ab.byteLength & ~7;
+function _FlatJS_init_ab(flatjs, ab, start, limit, initialize) {
+    if ((start|0) != start || (limit|0) != limit)
+	throw new Error("Invalid bounds: " + start + " " + limit);
+    start = (start + 7) & ~7;
+    limit = (limit & ~7);
+    if (start < 0 || limit <= start || limit > ab.byteLength)
+	throw new Error("Invalid bounds: " + start + " " + limit);
+    var len = (limit - start);
     if (len < 16)
 	throw new Error("The memory is too small even for metadata");
     flatjs.alloc = _FlatJS_alloc_ab;
-    _mem_int8 = new Int8Array(ab, 0, len);
-    _mem_uint8 = new Uint8Array(ab, 0, len);
-    _mem_int16 = new Int16Array(ab, 0, len/2);
-    _mem_uint16 = new Uint16Array(ab, 0, len/2);
-    _mem_int32 = new Int32Array(ab, 0, len/4);
-    _mem_uint32 = new Uint32Array(ab, 0, len/4);
-    _mem_float32 = new Float32Array(ab, 0, len/4);
-    _mem_float64 = new Float64Array(ab, 0, len/8);
+    _mem_int8 = new Int8Array(ab, start, len);
+    _mem_uint8 = new Uint8Array(ab, start, len);
+    _mem_int16 = new Int16Array(ab, start, len/2);
+    _mem_uint16 = new Uint16Array(ab, start, len/2);
+    _mem_int32 = new Int32Array(ab, start, len/4);
+    _mem_uint32 = new Uint32Array(ab, start, len/4);
+    _mem_float32 = new Float32Array(ab, start, len/4);
+    _mem_float64 = new Float64Array(ab, start, len/8);
     if (initialize) {
 	_mem_int32[2] = len;
 	_mem_int32[1] = 16;
