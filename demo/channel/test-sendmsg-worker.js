@@ -12,7 +12,7 @@ importScripts("../../../parlib-simple/src/marshaler.js",
 onmessage =
     function (ev) {
 	var [sab, iterations, channel_state] = ev.data;
-	FlatJS.init(sab, false);
+	FlatJS.init(sab, 0, sab.byteLength, false);
 
 	var r = new ChannelReceiver(channel_state);
 	var s = new ChannelSender(channel_state);

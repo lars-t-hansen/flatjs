@@ -23,9 +23,9 @@
 "use strict";
 
 /*
- * Create shared data for the channel.  This is opaque; the returned
- * value can be sent among workers with postMessage and passed to the
- * constructors for ChannelSender and ChannelReceiver.
+ * Create shared state for the channel.  The state is opaque.  The
+ * returned value can be sent among workers with postMessage and
+ * passed to the constructors for ChannelSender and ChannelReceiver.
  *
  * "size" is the capacity of the underlying message queue, in bytes.
  *

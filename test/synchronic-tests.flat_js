@@ -2,7 +2,7 @@
 
 load("../libflatjs.js");
 var ab = new SharedArrayBuffer(65536);
-FlatJS.init(ab, true);
+FlatJS.init(ab, 0, ab.byteLength, true);
 
 // Synchronic fields of class
 
@@ -63,7 +63,7 @@ Counter.count.set(c, 0);
 evalInWorker(`
 load("../libflatjs.js");
 var ab = getSharedArrayBuffer();
-FlatJS.init(ab);
+FlatJS.init(ab, 0, ab.byteLength, false);
 
 var c = ${c};
 

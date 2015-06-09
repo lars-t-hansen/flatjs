@@ -21,7 +21,7 @@ const width = 800;
 // FlatJS setup.
 
 const RAW_MEMORY = new ArrayBuffer(height*width*4 + 65536);
-FlatJS.init(RAW_MEMORY, true);
+FlatJS.init(RAW_MEMORY, 0, RAW_MEMORY.byteLength, true);
 
 // CONFIGURATION
 

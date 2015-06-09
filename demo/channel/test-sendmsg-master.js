@@ -10,7 +10,7 @@ var qsize = 4096;
 var w = new Worker("test-sendmsg-worker.js");
 
 var sab = new SharedArrayBuffer(65536);
-FlatJS.init(sab, true);
+FlatJS.init(sab, 0, sab.byteLength, true);
 
 // Setup our state first.
 
