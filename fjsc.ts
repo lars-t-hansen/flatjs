@@ -13,20 +13,20 @@
  *   fjsc input-file ...
  *
  * One output file will be produced for each input file.  Each input
- * file must have extension .xx.flatjs, where x is "js" or "ts".  On
- * output the .flatjs suffix will be stripped.
+ * file must have extension .flat_xx where xx is typically js or ts.
+ * On output the ".flat" qualifier will be stripped.
  *
+ * ---
  *
  * This is source code for TypeScript 1.5 and node.js 0.10 / ECMAScript 5.
- * Tested with tsc 1.5.0-beta and nodejs 0.10.25.
- *
- * To compile:
- *   tsc -t ES5 -m commonjs fjsc.ts
+ * Tested with tsc 1.5.0-beta and nodejs 0.10.25 and 0.12.0, on Linux and Mac OS X.
  */
 
 /// <reference path='typings/node/node.d.ts' />
 
 import fs = require("fs");
+
+const VERSION = "0.5";
 
 enum DefnKind {
     Class,
@@ -434,12 +434,12 @@ const allSources:Source[] = [];
 function main(args: string[]):void {
     try {
 	for ( let input_file of args ) {
-	    if (!(/.\.[a-zA-Z0-9]+\.flatjs$/.test(input_file)))
-		throw new UsageError("Bad file name (must be .some-extension.flatjs): " + input_file);
+	    if (!(/.\.flat_[a-zA-Z0-9]+$/.test(input_file)))
+		throw new UsageError("Bad file name (must be *.flat_<extension>): " + input_file);
 	    let text = fs.readFileSync(input_file, "utf8");
 	    let lines = text.split("\n");
 	    let [defs, residual] = collectDefinitions(input_file, lines);
-	    let output_file = input_file.replace(/\.flatjs$/,"");
+	    let output_file = input_file.replace(/\.flat_([a-zA-Z0-9]+)$/, ".$1");
 	    allSources.push(new Source(input_file, output_file, defs, residual));
 	}
 
@@ -454,8 +454,11 @@ function main(args: string[]):void {
 	pasteupTypes();
 	expandGlobalAccessorsAndMacros();
 
-	for ( let s of allSources )
-	    fs.writeFileSync(s.output_file, s.allText(), "utf8");
+	for ( let s of allSources ) {
+	    fs.writeFileSync(s.output_file,
+			     "// Generated from " + s.input_file + " by fjsc " + VERSION + "; github.com/lars-t-hansen/flatjs\n" + s.allText(),
+			     "utf8");
+	}
     }
     catch (e) {
 	if (e instanceof CapturedError)

@@ -2,7 +2,7 @@
 
 load("../libflatjs.js");
 var ab = new ArrayBuffer(1024);
-FlatJS.init(ab, true);
+FlatJS.init(ab, 0, ab.byteLength, true);
 
 // Basic ideas
 
