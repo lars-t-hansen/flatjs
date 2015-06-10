@@ -1,13 +1,5 @@
 /* -*- mode: javascript -*- */
 
-/*
-
-// Test code, also see bottom
-
-/// <reference path='typings/node/node.d.ts' />
-import fs = require("fs");
-
-*/
 
 /* The way this will be used is this:
 
@@ -21,6 +13,7 @@ import fs = require("fs");
    lead to much saner parsing and macro substitution (since we can avoid substituting
    within literals and comments).
 */
+
 
 enum Token {
     Unused,    // Also used for backtracking
@@ -415,24 +408,3 @@ class Tokenizer {
 	}
     }
 }
-
-/*
-// Test code, also see top.
-
-function test() {
-    let fn = "test/basic-tests.js.flatjs";
-    //let fn = "test.x";
-    let text = fs.readFileSync(fn, "utf8");
-    var tokenizer = new Tokenizer(text, function (line:number, msg:string) {
-	throw new Error(fn + ":" + line + ": " + msg);
-    });
-    for (;;) {
-	let [t, s] = tokenizer.next();
-	if (t == Token.EOI)
-	    break;
-	console.log(t + " " + s);
-    }
-}
-
-test();
-*/
