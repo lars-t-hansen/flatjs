@@ -32,9 +32,11 @@ enum Token {
     Assign,
     Other,
     Spaces,    // Also block comment that does not cross a line break, and line comment
-    Linebreak,
-    Comment,   // Block comment that crosses a line break, query for # of line breaks
+    Linebreak, // One line break
+    Comment,   // Block comment that crosses a line break, a SetLine will follow
+    SetLine,   // Set the line number.  Payload is a comment: /*n*/ where n is the new line number
     FlatJS,
+    New,
     EOI
 };
 
@@ -116,9 +118,28 @@ const optrie = (function () {
     return t;
 })();
 
-class Tokenizer {
+interface Tokensource {
+    next(): [Token,string];
+}
+
+class Retokenizer implements Tokensource
+{
+    constructor(private input:[Token,string][], private loc=0, private end=-1) {
+	if (this.end == -1)
+	    this.end = this.input.length;
+    }
+
+    next(): [Token,string] {
+	if (this.loc == this.end)
+	    return [Token.EOI,""];
+	return this.input[this.loc++];
+    }
+}
+
+class Tokenizer implements Tokensource
+{
     private lineNumber = 0;
-    private lastLineBreaks = 0;
+    private adjustLineNumber = false;
 
     // reportError must throw an exception.  line is the line number
     // within the input, counting the first line starting at loc.
@@ -133,6 +154,11 @@ class Tokenizer {
 
     next(): [Token,string] {
 	for (;;) {
+	    if (this.adjustLineNumber) {
+		adjustLineNumber = false;
+		return [Token.SetLine,"/*" + lineNumber + "*/"];
+	    }
+
 	    if (this.loc == this.end)
 		return [Token.EOI,""];
 
@@ -182,9 +208,14 @@ class Tokenizer {
 	    }
 
 	    if (c == '@') {
+		// FIXME: subsequent must not be ident char
 		if (this.loc+6 <= this.end && this.input.substring(this.loc, this.loc+6) == "flatjs") {
 		    this.loc += 6;
 		    return [Token.FlatJS, "@flatjs"];
+		}
+		if (this.loc+3 <= this.end && this.input.substring(this.loc, this.loc+3) == "new") {
+		    this.loc += 3;
+		    return [Token.New, "@new"];
 		}
 		return [Token.Other,c];
 	    }
@@ -340,7 +371,7 @@ class Tokenizer {
 	}
 
 	if (this.lineNumber > lineBefore) {
-	    this.lastLineBreaks = this.lineNumber - lineBefore;
+	    adjustLineNumber = true;
 	    return [Token.Comment, s];
 	}
 	return [Token.Spaces, s];

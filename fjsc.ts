@@ -395,15 +395,11 @@ class SSet {
     }
 }
 
-class SourceLine {
-    constructor(public file:string, public line:number, public text:string) {}
-}
-
 class Source {
-    constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public lines:SourceLine[]) {}
+    constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public tokens:[Token,string][]) {}
 
     allText(): string {
-	return this.lines.map(function (x) { return x.text }).join("\n");
+	return this.tokens.map(function (x) { return x[1] }).join("\n");
     }
 }
 
@@ -517,128 +513,399 @@ const blank_re = new RegExp("^" + Os + CommentOpt + "$");
 const space_re = new RegExp("^" + Os + "$");
 const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(" + Id + ")" + QualifierOpt + "(?:\.(Array))?" + Os + ";?" + CommentOpt + "$");
 
-function collectDefinitions(filename:string, lines:string[]):[UserDefn[], SourceLine[]] {
-    let defs:UserDefn[] = [];
-    let nlines:SourceLine[] = [];
-    let i=0, lim=lines.length;
-    while (i < lim) {
-	let l = lines[i++];
-	if (!start_re.test(l)) {
-	    nlines.push(new SourceLine(filename, i, l));
-	    continue;
-	}
+// function collectDefinitions(filename:string, lines:string[]):[UserDefn[], SourceLine[]] {
+//     let defs:UserDefn[] = [];
+//     let nlines:SourceLine[] = [];
+//     let i=0, lim=lines.length;
+//     while (i < lim) {
+// 	let l = lines[i++];
+// 	if (!start_re.test(l)) {
+// 	    nlines.push(new SourceLine(filename, i, l));
+// 	    continue;
+// 	}
 
-	let kind = "";
-	let name = "";
-	let inherit = "";
-	let lineno = i;
-	let m:string[] = null;
-	if (m = struct_re.exec(l)) {
-	    kind = "struct";
-	    name = m[1];
-	}
-	else if (m = class_re.exec(l)) {
-	    kind = "class";
-	    name = m[1];
-	    inherit = m[2] ? m[2] : "";
-	}
-	else
-	    throw new ProgramError(filename, i, "Syntax error: Malformed definition line");
+// 	let kind = "";
+// 	let name = "";
+// 	let inherit = "";
+// 	let lineno = i;
+// 	let m:string[] = null;
+// 	if (m = struct_re.exec(l)) {
+// 	    kind = "struct";
+// 	    name = m[1];
+// 	}
+// 	else if (m = class_re.exec(l)) {
+// 	    kind = "class";
+// 	    name = m[1];
+// 	    inherit = m[2] ? m[2] : "";
+// 	}
+// 	else
+// 	    throw new ProgramError(filename, i, "Syntax error: Malformed definition line");
 
-	let properties:Prop[] = [];
-	let methods:Method[] = [];
-	let in_method = false;
-	let mbody:string[] = null;
-	let method_type = MethodKind.Virtual;
-	let method_name = "";
-	let method_line = 0;
-	let method_signature:string[] = null;
+// 	let properties:Prop[] = [];
+// 	let methods:Method[] = [];
+// 	let in_method = false;
+// 	let mbody:string[] = null;
+// 	let method_type = MethodKind.Virtual;
+// 	let method_name = "";
+// 	let method_line = 0;
+// 	let method_signature:string[] = null;
 
-	// Do not check for duplicate names here since that needs to
-	// take into account inheritance.
+// 	// Do not check for duplicate names here since that needs to
+// 	// take into account inheritance.
 
-	while (i < lim) {
-	    l = lines[i++];
-	    if (end_re.test(l))
-		break;
-	    if (m = method_re.exec(l)) {
-		if (kind != "class")
-		    throw new ProgramError(filename, i, "@method is only allowed in classes");
-		if (in_method)
-		    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
-		in_method = true;
-		method_line = i;
-		method_type = (m[1] == "method" ? MethodKind.NonVirtual : MethodKind.Virtual);
-		method_name = m[2];
-		// Parse the signature.  Just use the param parser for now,
-		// but note that what we get back will need postprocessing.
-		let pp = new ParamParser(filename, i, m[3], /* skip left paren */ 1);
-		let args = pp.allArgs();
-		args.shift();	               // Discard SELF
-		// Issue #15: In principle there are two signatures here: there is the
-		// parameter signature, which we should keep intact in the
-		// virtual, and there is the set of arguments extracted from that,
-		// including any splat.
-		method_signature = args.map(function (x) { return parameterToArgument(filename, i, x) });
-		mbody = [m[3]];
-	    }
-	    else if (m = special_re.exec(l)) {
-		if (kind != "struct")
-		    throw new ProgramError(filename, i, `@${m[1]} is only allowed in structs`);
-		if (in_method)
-		    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
-		method_line = i;
-		in_method = true;
-		switch (m[1]) {
-		case "get": method_type = MethodKind.Get; break;
-		case "set": method_type = MethodKind.Set; break;
-		}
-		method_name = "";
-		method_signature = null;
-		mbody = [m[2]];
-	    }
-	    else if (in_method) {
-		// TODO: if we're going to be collecting random cruft
-		// then blank and comment lines at the end of a method
-		// really should be placed at the beginning of the
-		// next method.  Also see hack in pasteupTypes() that
-		// removes blank lines from the end of a method body.
-		mbody.push(l);
-	    }
-	    else if (m = prop_re.exec(l)) {
-		let qual = PropQual.None;
-		switch (m[3]) {
-		case "synchronic": qual = PropQual.Synchronic; break;
-		case "atomic": qual = PropQual.Atomic; break;
-		}
-		properties.push(new Prop(i, m[1], qual, m[4] == "Array", m[2]));
-	    }
-	    else if (blank_re.test(l)) {
-	    }
-	    else
-		throw new ProgramError(filename, i, "Syntax error: Not a property or method: " + l);
-	}
-	if (in_method)
-	    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
+// 	while (i < lim) {
+// 	    l = lines[i++];
+// 	    if (end_re.test(l))
+// 		break;
+// 	    if (m = method_re.exec(l)) {
+// 		if (kind != "class")
+// 		    throw new ProgramError(filename, i, "@method is only allowed in classes");
+// 		if (in_method)
+// 		    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
+// 		in_method = true;
+// 		method_line = i;
+// 		method_type = (m[1] == "method" ? MethodKind.NonVirtual : MethodKind.Virtual);
+// 		method_name = m[2];
+// 		// Parse the signature.  Just use the param parser for now,
+// 		// but note that what we get back will need postprocessing.
+// 		let pp = new ParamParser(filename, i, m[3], /* skip left paren */ 1);
+// 		let args = pp.allArgs();
+// 		args.shift();	               // Discard SELF
+// 		// Issue #15: In principle there are two signatures here: there is the
+// 		// parameter signature, which we should keep intact in the
+// 		// virtual, and there is the set of arguments extracted from that,
+// 		// including any splat.
+// 		method_signature = args.map(function (x) { return parameterToArgument(filename, i, x) });
+// 		mbody = [m[3]];
+// 	    }
+// 	    else if (m = special_re.exec(l)) {
+// 		if (kind != "struct")
+// 		    throw new ProgramError(filename, i, `@${m[1]} is only allowed in structs`);
+// 		if (in_method)
+// 		    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
+// 		method_line = i;
+// 		in_method = true;
+// 		switch (m[1]) {
+// 		case "get": method_type = MethodKind.Get; break;
+// 		case "set": method_type = MethodKind.Set; break;
+// 		}
+// 		method_name = "";
+// 		method_signature = null;
+// 		mbody = [m[2]];
+// 	    }
+// 	    else if (in_method) {
+// 		// TODO: if we're going to be collecting random cruft
+// 		// then blank and comment lines at the end of a method
+// 		// really should be placed at the beginning of the
+// 		// next method.  Also see hack in pasteupTypes() that
+// 		// removes blank lines from the end of a method body.
+// 		mbody.push(l);
+// 	    }
+// 	    else if (m = prop_re.exec(l)) {
+// 		let qual = PropQual.None;
+// 		switch (m[3]) {
+// 		case "synchronic": qual = PropQual.Synchronic; break;
+// 		case "atomic": qual = PropQual.Atomic; break;
+// 		}
+// 		properties.push(new Prop(i, m[1], qual, m[4] == "Array", m[2]));
+// 	    }
+// 	    else if (blank_re.test(l)) {
+// 	    }
+// 	    else
+// 		throw new ProgramError(filename, i, "Syntax error: Not a property or method: " + l);
+// 	}
+// 	if (in_method)
+// 	    methods.push(new Method(method_line, method_type, method_name, method_signature, mbody));
 
-	if (kind == "class")
-	    defs.push(new ClassDefn(filename, lineno, name, inherit, properties, methods, nlines.length));
-	else
-	    defs.push(new StructDefn(filename, lineno, name, properties, methods, nlines.length));
+// 	if (kind == "class")
+// 	    defs.push(new ClassDefn(filename, lineno, name, inherit, properties, methods, nlines.length));
+// 	else
+// 	    defs.push(new StructDefn(filename, lineno, name, properties, methods, nlines.length));
+//     }
+//     return [defs, nlines];
+// }
+
+
+// // The input is Id, Id:Blah, or ...Id.  Strip any :Blah annotations.
+// function parameterToArgument(file:string, line:number, s:string):string {
+//     if (/^\s*(?:\.\.\.)[A-Za-z_$][A-Za-z0-9_$]*\s*$/.test(s))
+// 	return s;
+//     let m = /^\s*([A-Za-z_\$][A-Za-z0-9_\$]*)\s*:?/.exec(s);
+//     if (!m)
+// 	throw new ProgramError(file, line, "Unable to understand argument to virtual function: " + s);
+//     return m[1];
+// }
+
+class TokenScanner
+{
+    // The current token, always valid.  Do not set this directly.
+    current: [Token,string];
+
+    // The current line number.  Do not set this directly.
+    line = 0;
+
+    constructor(private ts:Tokensource, private reportError:(line:number, msg:string) => void, line=1) {
+	this.current = ts.next();
+	this.line = line;
     }
-    return [defs, nlines];
+
+    // Return current token and advance to next
+    eat(): [Token,string] {
+	let result = this.current;
+	this.current = this.ts.next();
+	return result;
+    }
+
+    // Given /*n*/, return n.
+    extractLine(tk:string):number {
+	return parseInt(tk.substring(2,tk.length-2));
+    }
+
+    // Shorthand for matching an Id with the given ID name.
+
+    matchName(name:string): void {
+	let s = matchId();
+	if (s != name)
+	    this.reportError(this.line, "Expected '" + name + "' but encountered '" + s + "'");
+    }
+
+    // Shorthand for matching an Id; return the ID name.
+    matchId(): string {
+	return match(Token.Id)[1];
+    }
+
+    // Skip spaces.  If the leading token then matches t then return it and advance.
+    // Otherwise signal an error.
+    match(t:Token): [Token,string] {
+	if (!this.lookingAt(t))
+	    this.reportError(this.line, "Expected " + Token[t] + " but encountered " + Token[current[0]]);
+	return eat();
+    }
+
+    // Skip spaces.  Return true iff the leading token then matches t.
+    lookingAt(t:Token): boolean {
+	this.skipSpace();
+	return this.current[0] == t;
+    }
+
+    // Skip across whitespace and comments, maintaining line number.
+    skipSpace():void {
+	let ts = this.ts;
+	for (;;) {
+	    switch (this.current[0]) {
+	    case Spaces:
+	    case Comment:
+		this.current = ts.next();
+		continue;
+	    case Linebreak:
+		this.line++;
+		this.current = ts.next();
+		continue;
+	    case SetLine:
+		this.line = this.extractLine(current[1]);
+		this.current = ts.next();
+		continue;
+	    default:
+		return;
+	    }
+	}
+    }
 }
 
-// The input is Id, Id:Blah, or ...Id.  Strip any :Blah annotations.
-function parameterToArgument(file:string, line:number, s:string):string {
-    if (/^\s*(?:\.\.\.)[A-Za-z_$][A-Za-z0-9_$]*\s*$/.test(s))
-	return s;
-    let m = /^\s*([A-Za-z_\$][A-Za-z0-9_\$]*)\s*:?/.exec(s);
-    if (!m)
-	throw new ProgramError(file, line, "Unable to understand argument to virtual function: " + s);
-    return m[1];
+class ParenCounter
+{
+    private pstack:Token[] = [];
+
+    level = 0;
+    isUnbalanced = false;
+    unbalanced = Token.Unused;
+
+    constructor(private ts:TokenScanner) {}
+
+    lookingAt(t:Token): boolean {
+	return ts.lookingAt(t);
+    }
+
+    eat():[Token,string] {
+	let t = ts.eat();
+	switch (t[0]) {
+	case Token.EOI:
+	    break;
+	case Token.LParen:
+	case Token.LBrace:
+	case Token.LBracket:
+	    pstack.push(t[0]);
+	    level++;
+	    break;
+	case Token.RParen:
+	    if (pstack.pop() != Token.LParen) {
+		isUnbalanced = true;
+		unbalanced = t[0];
+	    }
+	    level--;
+	    break;
+	case Token.RBrace:
+	    if (pstack.pop() != Token.LBrace) {
+		isUnbalanced = true;
+		unbalanced = t[0];
+	    }
+	    level--;
+	    break;
+	case Token.RBracket:
+	    if (pstack.pop() != Token.LBracket) {
+		isUnbalanced = true;
+		unbalanced = t[0];
+	    }
+	    level--;
+	    break;
+	}
+	return t;
+    }
 }
 
+function collectDefinitions(file:string, input:string):[UserDefn[], Token[]] {
+    let defs:UserDefn[] = [];
+    let ntokens:Token[] = [];
+    let ts = new TokenScanner(new Tokenizer(input, errHandler), errHandler);
+    for (let t=ts.eat() ; t[0] != Token.EOI ; t=ts.eat()) {
+	if (t[0] == Token.FlatJS)
+	    defs.push(parseDefn(file, ts));
+	else
+	    ntokens.push(t);
+    }
+    return [defs, ntokens];
+
+    function errHandler(line:number, msg:string) {
+	throw new ProgramError(file, line, msg);
+    }
+}
+
+function parseDefn(file:string, ts:TokenScanner): Defn {
+    let kind = ts.matchId();
+    if (kind != "struct" && kind != "class")
+	throw new ProgramError(file, i, "Syntax error: Expected 'class' or 'struct'");
+
+    let defLine = ts.line;
+    let name = ts.matchId();
+
+    let inherit = "";
+    if (kind == "class") {
+	if (ts.lookingAt(Token.Id)) {
+	    ts.matchName("extends");
+	    inherit = ts.matchId();
+	}
+    }
+
+    let properties:Prop[] = [];
+    let methods:Method[] = [];
+
+    ts.match(Token.LBrace);
+
+    while (!ts.lookingAt(Token.RBrace)) {
+	var memberName = ts.matchId();
+	var memberLine = ts.line;
+
+	if (ts.lookingAt(Token.Colon)) {
+	    ts.eat();
+	    let basename = ts.matchId();
+	    let qual = PropQual.None;
+	    let isArray = false;
+	    // Currently only [atomic|synchronic][Array]
+	    if (ts.lookingAt(Token.Dot)) {
+		ts.eat();
+		var q1 = ts.matchId();
+		if (q1 == "atomic")
+		    qual = PropQual.Atomic;
+		else if (q1 == "synchronic")
+		    qual = PropQual.Synchronic;
+		if (qual != PropQual.None && ts.lookingAt(Token.Dot)) {
+		    ts.eat();
+		    q1 = ts.matchId();
+		}
+		if (q1 != "Array")
+		    throw new ProgramError("'Array' required here");
+		isArray = true;
+	    }
+	    linebreakOrSemicolon();
+
+	    properties.push(new Prop(memberLine, memberName, qual, isArray, basename));
+	}
+	else {
+	    let method_type = MethodKind.NonVirtual;
+
+	    if (memberName == "virtual") {
+		if (kind == "struct")
+		    throw new ProgramError(file, line, `virtual methods are not allowed in structs`);
+		method_type = MethodKind.Virtual;
+		memberName = ts.matchId();
+	    }
+
+	    if (memberName == "set")
+		method_type = MethodKind.Set;
+	    else if (memberName == "get")
+		method_type = MethodKind.Get;
+
+	    if (kind != "struct" && (method_type == MethodKind.Set || method_type == MethodKind.Get))
+		throw new ProgramError(file, line, MethodKind[method_type] + " methods are only allowed in structs");
+
+	    // This will go away
+	    if (kind == "struct" && !(method_type == MethodKind.Set || method_type == MethodKind.Get))
+		throw new ProgramError(file, line, "Methods are only allowed in classes");
+
+	    let mbody:[Token,string][] = []
+	    let pstack:Token[] = [];
+
+	    let pc = new ParenCounter(ts);
+	    for (;;) {
+		let t = pc.eat();
+		if (t[0] == Token.EOI)
+		    throw new ProgramError(file, ts.line, "End of input inside method definition");
+		mbody.push(t);
+		if (pc.level < 0 || pc.isUnbalanced)
+		    throw new ProgramError(file, ts.line, "Unbalanced parentheses");
+		if (pc.level == 0 && t[0] == Token.RBrace)
+		    break;
+	    }
+
+	    methods.push(new Method(method_line, method_type, method_name, parseSignature(mbody), mbody));
+	}
+    }
+
+    match(Token.RBrace);
+
+    if (kind == "class")
+	return new ClassDefn(filename, lineno, name, inherit, properties, methods, nlines.length);
+    else
+	return new StructDefn(filename, lineno, name, properties, methods, nlines.length);
+}
+
+function parseSignature(file:string, line:number, mbody:[Token,string]): string[] {
+    let ts2 = new TokenScanner(new Retokenizer(mbody),
+			       function(line:number, msg:string) { throw new ProgramError(file, line, msg); },
+			       line);
+    let method_signature:string[] = [];
+    ts2.match(Token.LParen);
+    ts2.matchName("SELF");
+    method_signature.push("SELF");
+    while (ts2.lookingAt(Token.Comma)) {
+	ts2.eat();
+	if (ts2.lookingAt(Token.DotDotDot))
+	    method_signature.push(ts2.eat());
+	method_signature.push(ts2.matchId());
+	// Skip annotations, to support TypeScript etc
+	if (ts2.lookingAt(Token.Colon)) {
+	    ts2.eat();
+	    let pc = new ParenCounter(ts2);
+	    while (pc.level > 0 || !pc.lookingAt(Token.Comma) && !pc.lookingAt(Token.RParen))
+		let t = pc.eat();
+		if (t[0] == Token.EOI || pc.isUnbalanced)
+		    throw new ProgramError(file, ts2.line, "Unbalanced parentheses");
+	    }
+	}
+    }
+    ts2.match(Token.RParen);
+    return method_signature;
+}
 
 class ParamParser {
     private lim = 0;
@@ -1191,6 +1458,9 @@ function replaceSetterShorthand(file:string, line:number, s:string, p:number, ms
     return [`${substitution_left} ${rhs})${pp.sawSemi ? ';' : ''} ${s.substring(pp.where)}`,
 	    substitution_left.length];
 }
+
+// MEN AT WORK
+// We can just use "Other" tokens for inserted boilerplate.
 
 function linePusher(info:() => [string,number], nlines:SourceLine[]): (text:string) => void {
     return function (text:string):void {
