@@ -25,21 +25,21 @@ var glob = 0;
     x:int32
     y:int32
 
-    @method init(SELF) {
+    init(SELF) {
 	SELF.x = SELF.y = 0;	// Shorthand syntax
 	SELF.y += 5;		// Shorthand syntax
     }
 
-    @virtual deep6(SELF) {
+    virtual deep6(SELF) {
 	SELF.x.set(-SELF.x);
 	SELF.y.set(-SELF.y);
 	SELF.deep7(86);
     }
 
-    @method deep7(SELF, k) {
+    deep7(SELF, k) {
 	glob = k;
     }
-} @end
+}
 
 assertEq(typeof Point, "function");
 assertEq((new Point) instanceof Point, true);
@@ -64,18 +64,24 @@ assertEq(Point.CLSID, _mem_int32[p>>2]); // White-box, layout
 
 assertEq(Point.x.ref(p) + int32.SIZE, Point.y.ref(p)); // Gray-box, layout
 
+console.log("Here Point");
+
 Point.deep6(p);
+
+console.log("Here after Point");
+
 assertEq(glob, 86);
+
 
 // Sundry syntax corner cases
 
 @flatjs class EmptyClass {
-} @end
+}
 
 @flatjs class MethodOnlyClass {
-    @method oneLiner(SELF) { return 1; }
-    @method anotherOneLiner(SELF) { return 2; }
-} @end
+    oneLiner(SELF) { return 1; }
+    anotherOneLiner(SELF) { return 2; }
+}
 
 // Basic inheritance
 
@@ -89,7 +95,7 @@ var g_probe3 = "there";
 @flatjs class Point3D extends Point {
     z:int32
 
-    @method init(SELF, x, y, z) {
+    init(SELF, x, y, z) {
 	SELF.x.set(x);
 	SELF.y.set(y);
 	SELF.z.set(z);
@@ -101,10 +107,10 @@ var g_probe3 = "there";
 	return SELF;
     }
 
-    @virtual deep6(SELF) {	// Override
+    virtual deep6(SELF) {	// Override
 	SELF.z = -SELF.z;	// Alternate syntax
     }
-} @end
+}
 
 assertEq(Point3D.NAME, "Point3D");
 
@@ -149,14 +155,14 @@ assertEq(Point3D.BASE, Point);
     x:float64;
     y:int32;
 
-    @set(SELF, v) {
+    set(SELF, v) {
 	SELF.x.set(v.x);
 	SELF.y.set(v.y);
     }
-    @get(SELF) {
+    get(SELF) {
 	return {x:SELF.x, y:SELF.y};
     }
-} @end
+}
 
 assertEq(Pair.SIZE, 16);
 assertEq(Pair.ALIGN, 8);	// White-box, it could be larger
@@ -172,7 +178,7 @@ assertEq((new Pair) instanceof Pair, true);
     pad2:float64;
     p:Pair;
     pad3:int32;
-} @end
+}
 
 var pr = @new PairBox;
 PairBox.p.x.set(pr, 10);
@@ -235,18 +241,18 @@ Pair.Array.x.setAt(pa, i, "37\"42");
 
 @flatjs class WithArray {
     xs : int32.Array
-} @end
+}
 
 // Default getter and setter
 
 @flatjs struct Pair2 {
     x:float64;
     y:int32;
-} @end
+}
 
 @flatjs class Pair2Box {
     p: Pair2;
-} @end
+}
 
 var p2 = @new Pair2Box;
 Pair2Box.p.set(p2, { x:-1.5, y:37} );

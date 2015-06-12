@@ -10,17 +10,17 @@ FlatJS.init(ab, 0, ab.byteLength, true);
     count: int32.atomic
     xyzzy: uint8.atomic
 
-    @method init(SELF, x) {
+    init(SELF, x) {
 	SELF.count.set(x);	// Atomics.store
 	return SELF;
     }
 
-    @method fnord(SELF) {
+    fnord(SELF) {
 	SELF.count = 0;
 	SELF.count += 5;
     }
 
-} @end
+}
 
 var c = Counter.init(@new Counter, 7);
 
@@ -49,7 +49,7 @@ assertEq(Counter.xyzzy(c), 384%256);
 
 @flatjs struct Cnt {
     count: int32.atomic
-} @end
+}
 
 var p = @new Cnt.Array(10);
 

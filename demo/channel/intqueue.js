@@ -2,7 +2,7 @@
 /* -*- mode: javascript -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. *//*3*/
 
 /*
  * Simple multi-producer and multi-consumer shared-memory queue for
@@ -11,7 +11,7 @@
  *
  * This version is built on flatjs.  The original version, in
  * parlib-simple, used hand-built shared-memory data structures.
- */
+ *//*12*/
 
 function IntQueue(p) { this._pointer = (p|0); }
 Object.defineProperty(IntQueue.prototype, 'pointer', { get: function () { return this._pointer } });
@@ -114,3 +114,4 @@ IntQueue.release = function (SELF) {
     }
 IntQueue.initInstance = function(SELF) { _mem_int32[SELF>>2]=160160494; return SELF; }
 FlatJS._idToType[160160494] = IntQueue;
+

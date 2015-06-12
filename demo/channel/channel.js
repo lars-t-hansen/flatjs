@@ -3,7 +3,7 @@
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. *//*4*/
 
 /*
  * Simple unidirectional marshaling shared-memory channel.  There can
@@ -14,7 +14,7 @@
  * send or receive SharedArrayBuffer values at all.  Also, the
  * marshaler currently does not deal with circular/shared structure
  * but that's fixable.
- */
+ *//*15*/
 
 // REQUIRE:
 //   marshaler.js (from parlib-simple)
@@ -35,7 +35,7 @@
  * TypedArrays) by omitting tags when it can.  If mostly small data
  * structures are being sent then a few kilobytes should be enough to
  * allow a number of messages to sit in a queue at once.
- */
+ *//*36*/
 function makeChannelSharedState(size) {
     return IntQueue.init(IntQueue.initInstance(FlatJS.allocOrThrow(68,4)), Math.floor(size/4));
 }
@@ -44,7 +44,7 @@ function makeChannelSharedState(size) {
  * Create a sender endpoint of the channel.
  *
  * "shared_state" is a data structure created with makeChannelSharedState.
- */
+ *//*45*/
 function ChannelSender(shared_state) {
     this._queue = shared_state;
     this._marshaler = new Marshaler();
@@ -59,7 +59,7 @@ function ChannelSender(shared_state) {
  * available.
  *
  * Throws ChannelEncodingError on encoding error.
- */
+ *//*60*/
 ChannelSender.prototype.send = function(msg, t) {
     try {
 	var {values, newSAB} = this._marshaler.marshal([msg]);
@@ -75,7 +75,7 @@ ChannelSender.prototype.send = function(msg, t) {
 
 /*
  * Create a receiver endpoint.  See comments on the sender endpoint.
- */
+ *//*76*/
 function ChannelReceiver(shared_state) {
     this._queue = shared_state;
     this._marshaler = new Marshaler();
@@ -86,7 +86,7 @@ function ChannelReceiver(shared_state) {
  * milliseconds (undefined == indefinite wait) until there is a
  * message if necessary.  Returns the message, or the noMessage value
  * if none was received.
- */
+ *//*87*/
 ChannelReceiver.prototype.receive = function (t, noMessage) {
     var M = IntQueue.dequeue(this._queue, t);
     if (M == null)
@@ -96,7 +96,7 @@ ChannelReceiver.prototype.receive = function (t, noMessage) {
 
 /*
  * Error object.
- */
+ *//*97*/
 function ChannelEncodingError(message) {
     this.message = message;
 }

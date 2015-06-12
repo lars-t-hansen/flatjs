@@ -56,10 +56,10 @@ function dot(a, b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
     y: float64
     z: float64
 
-    @get(SELF) {
+    get(SELF) {
 	return DL3(SELF.x, SELF.y, SELF.z);
     }
-} @end
+}
 
 // Avoid intermediate DL3 objects
 
@@ -73,7 +73,7 @@ function mulrefi(a, c) { return DL3(Vec3.x(a)*c, Vec3.y(a)*c, Vec3.z(a)*c); }
     shininess: float64
     ambient:   Vec3
     mirror:    float64
-} @end
+}
 
 function makeMaterial(diffuse, specular, shininess, ambient, mirror) {
     var v = new Material;
@@ -88,25 +88,25 @@ function makeMaterial(diffuse, specular, shininess, ambient, mirror) {
 @flatjs class Surface {
     material: Material
 
-    @method init(SELF, material) {
+    init(SELF, material) {
 	SELF.material = material;
 	return SELF;
     }
 
-    @virtual intersect(SELF, eye, ray, min, max) {
+    virtual intersect(SELF, eye, ray, min, max) {
 	throw "Pure: Surface.intersect"
     }
 
-    @virtual normal(SELF, p) {
+    virtual normal(SELF, p) {
 	throw "Pure: Surface.normal"
     }
-} @end
+}
 
 @flatjs class Scene extends Surface {
     length: int32
     objects: Surface.Array
 
-    @method init(SELF, objects) {
+    init(SELF, objects) {
 	var len = objects.length;
 	SELF.length = len;
 	var objs = @new Surface.Array(len);
@@ -116,7 +116,7 @@ function makeMaterial(diffuse, specular, shininess, ambient, mirror) {
 	return SELF;
     }
 
-    @virtual intersect(SELF, eye, ray, min, max) {
+    virtual intersect(SELF, eye, ray, min, max) {
 	var min_obj = NULL;
 	var min_dist = SENTINEL;
 
@@ -136,20 +136,20 @@ function makeMaterial(diffuse, specular, shininess, ambient, mirror) {
 	return {obj:min_obj, dist:min_dist};
     }
 
-} @end
+}
 
 @flatjs class Sphere extends Surface {
     center: Vec3
     radius: float64
 
-    @method init(SELF, material, center, radius) {
+    init(SELF, material, center, radius) {
 	Surface.init(SELF, material)
 	SELF.center = center;
 	SELF.radius = radius
 	return SELF;
     }
 
-    @virtual intersect(SELF, eye, ray, min, max) {
+    virtual intersect(SELF, eye, ray, min, max) {
 	var DdotD = dot(ray, ray);
 	var EminusC = subvref(eye, SELF.center.ref);
 	var B = dot(ray, EminusC);
@@ -169,17 +169,17 @@ function makeMaterial(diffuse, specular, shininess, ambient, mirror) {
 	return {obj:SELF, dist:_dist};
     }
 
-    @virtual normal(SELF, p) {
+    virtual normal(SELF, p) {
 	return divi(subvref(p, SELF.center.ref), SELF.radius);
     }
-} @end
+}
 
 @flatjs class Triangle extends Surface {
     v1: Vec3
     v2: Vec3
     v3: Vec3
 
-    @method init(SELF, material, v1, v2, v3) {
+    init(SELF, material, v1, v2, v3) {
 	Surface.init(SELF, material)
 	SELF.v1 = v1;
 	SELF.v2 = v2;
@@ -187,7 +187,7 @@ function makeMaterial(diffuse, specular, shininess, ambient, mirror) {
 	return SELF;
     }
 
-    @virtual intersect(SELF, eye, ray, min, max) {
+    virtual intersect(SELF, eye, ray, min, max) {
 	// TODO: observe that values that do not depend on g, h, and i can be precomputed
 	// and stored with the triangle (for a given eye position), at some (possibly significant)
 	// space cost.  Notably the numerator of "t" is invariant, as are many factors of the
@@ -217,19 +217,19 @@ function makeMaterial(diffuse, specular, shininess, ambient, mirror) {
 	return {obj:SELF, dist:t};
     }
 
-    @virtual normal(SELF, p) {
+    virtual normal(SELF, p) {
 	// TODO: Observe that the normal is invariant and can be stored with the triangle
 	return normalize(cross(subrefref(SELF.v2.ref, SELF.v1.ref), subrefref(SELF.v3.ref, SELF.v1.ref)));
     }
 
-} @end
+}
 
 @flatjs class Bitmap {
     data: int32.Array
     height: int32
     width: int32
 
-    @method init(SELF, height, width, color) {
+    init(SELF, height, width, color) {
 	SELF.height = height;
 	SELF.width = width;
 	var data = @new int32.Array(height*width);
@@ -241,15 +241,15 @@ function makeMaterial(diffuse, specular, shininess, ambient, mirror) {
     }
 
     // For debugging only
-    @method ref(SELF, y, x) {
+    ref(SELF, y, x) {
 	return int32.Array.at(SELF.data, (SELF.height-y)*SELF.width+x);
     }
 
     // Not a hot function
-    @method setColor(SELF, y, x, v) {
+    setColor(SELF, y, x, v) {
 	int32.Array.setAt(SELF.data, (SELF.height-y-1)*SELF.width+x, (255<<24)|((255*v.z)<<16)|((255*v.y)<<8)|(255*v.x));
     }
-} @end
+}
 
 const g_left = -2;
 const g_right = 2;

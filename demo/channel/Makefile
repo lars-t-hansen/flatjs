@@ -2,4 +2,4 @@
 
 .PHONY: all
 all:
-	nodejs ../../fjsc.js channel.flat_js intqueue.flat_js
+	nodejs ../../fjsc-exe.js channel.flat_js intqueue.flat_js

@@ -6,6 +6,13 @@
  * Author: Lars T Hansen, lhansen@mozilla.com
  */
 
+// For the purposes of testing, we can test the parser independently of the macro expander by
+// pasting up the residuals and splitting them and passing those to the macro expander.  The
+// method bodies likewise.  This is a hack, but it should work.
+//
+// Current bugs:
+//  - pasteup locations for definitions are not correct (all zero) [this breaks everything due to load() etc]
+
 /*
  * FlatJS compiler.  Desugars FlatJS syntax in JavaScript programs.
  *
@@ -288,7 +295,9 @@ enum MethodKind {
 }
 
 class Method {
-    constructor(public line:number, public kind:MethodKind, public name:string, public signature:string[], public body: string[]) {}
+    bodyLines:string[] = null;	// Hack
+
+    constructor(public line:number, public kind:MethodKind, public name:string, public signature:string[], public body:[Token,string][]) {}
 }
 
 class MapEntry {
@@ -395,11 +404,21 @@ class SSet {
     }
 }
 
+// A hack
+class SourceLine {
+    constructor(public file:string, public line:number, public text:string) {}
+}
+
 class Source {
+    // A hack for testing
+    lines: SourceLine[] = null;
+
     constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public tokens:[Token,string][]) {}
 
     allText(): string {
-	return this.tokens.map(function (x) { return x[1] }).join("\n");
+	if (this.lines)
+	    return this.lines.map(function(x) { return x.text }).join("\n");
+	return this.tokens.map(function (x) { return x[1] }).join("");
     }
 }
 
@@ -433,8 +452,8 @@ function main(args: string[]):void {
 	    if (!(/.\.flat_[a-zA-Z0-9]+$/.test(input_file)))
 		throw new UsageError("Bad file name (must be *.flat_<extension>): " + input_file);
 	    let text = fs.readFileSync(input_file, "utf8");
-	    let lines = text.split("\n");
-	    let [defs, residual] = collectDefinitions(input_file, lines);
+	    //let lines = text.split("\n");
+	    let [defs, residual] = collectDefinitions(input_file, text);
 	    let output_file = input_file.replace(/\.flat_([a-zA-Z0-9]+)$/, ".$1");
 	    allSources.push(new Source(input_file, output_file, defs, residual));
 	}
@@ -503,15 +522,15 @@ const PathOpt = "((?:\\." + Id + ")*)";
 const PathOptLazy = "((?:\\." + Id + ")*?)";
 const AssignOp = "(=|\\+=|-=|&=|\\|=|\\^=)(?!=)";
 
-const start_re = new RegExp("^" + Os + "@flatjs" + Ws + "(?:struct|class)" + Ws + "(?:" + Id + ")");
-const end_re = new RegExp("^" + Rbrace + Os + "@end" + CommentOpt + "$");
-const struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + CommentOpt + "$");
-const class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + CommentOpt + "$");
-const special_re = new RegExp("^" + Os + "@(get|set)" + "(" + LParen + Os + "SELF.*)$");
-const method_re = new RegExp("^" + Os + "@(method|virtual)" + Ws + "(" + Id + ")" + "(" + LParen + Os + "SELF.*)$");
-const blank_re = new RegExp("^" + Os + CommentOpt + "$");
-const space_re = new RegExp("^" + Os + "$");
-const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(" + Id + ")" + QualifierOpt + "(?:\.(Array))?" + Os + ";?" + CommentOpt + "$");
+// const start_re = new RegExp("^" + Os + "@flatjs" + Ws + "(?:struct|class)" + Ws + "(?:" + Id + ")");
+// const end_re = new RegExp("^" + Rbrace + Os + "@end" + CommentOpt + "$");
+// const struct_re = new RegExp("^" + Os + "@flatjs" + Ws + "struct" + Ws + "(" + Id + ")" + Lbrace + CommentOpt + "$");
+// const class_re = new RegExp("^" + Os + "@flatjs" + Ws + "class" + Ws + "(" + Id + ")" + Os + "(?:extends" + Ws + "(" + Id + "))?" + Lbrace + CommentOpt + "$");
+// const special_re = new RegExp("^" + Os + "@(get|set)" + "(" + LParen + Os + "SELF.*)$");
+// const method_re = new RegExp("^" + Os + "@(method|virtual)" + Ws + "(" + Id + ")" + "(" + LParen + Os + "SELF.*)$");
+// const blank_re = new RegExp("^" + Os + CommentOpt + "$");
+// const space_re = new RegExp("^" + Os + "$");
+// const prop_re = new RegExp("^" + Os + "(" + Id + ")" + Os + ":" + Os + "(" + Id + ")" + QualifierOpt + "(?:\.(Array))?" + Os + ";?" + CommentOpt + "$");
 
 // function collectDefinitions(filename:string, lines:string[]):[UserDefn[], SourceLine[]] {
 //     let defs:UserDefn[] = [];
@@ -649,37 +668,51 @@ class TokenScanner
 	this.line = line;
     }
 
-    // Return current token and advance to next
-    eat(): [Token,string] {
+    // Advance to next token.  Do not update line numbers.
+    next():void {
+	this.current = this.ts.next();
+    }
+
+    // Advance to next token.  Update line numbers.
+    advance():[Token,string] {
+	switch (this.current[0]) {
+	case Token.Linebreak:
+	    this.line++;
+	    break;
+	case Token.SetLine:
+	    this.line = this.extractLine(this.current[1]);
+	    break;
+	}
 	let result = this.current;
 	this.current = this.ts.next();
 	return result;
     }
 
-    // Given /*n*/, return n.
+    // Given a string of the form "/*n*/", return n as a number.
     extractLine(tk:string):number {
 	return parseInt(tk.substring(2,tk.length-2));
     }
 
     // Shorthand for matching an Id with the given ID name.
-
     matchName(name:string): void {
-	let s = matchId();
+	let s = this.matchId();
 	if (s != name)
 	    this.reportError(this.line, "Expected '" + name + "' but encountered '" + s + "'");
     }
 
     // Shorthand for matching an Id; return the ID name.
     matchId(): string {
-	return match(Token.Id)[1];
+	return this.match(Token.Id)[1];
     }
 
     // Skip spaces.  If the leading token then matches t then return it and advance.
     // Otherwise signal an error.
     match(t:Token): [Token,string] {
 	if (!this.lookingAt(t))
-	    this.reportError(this.line, "Expected " + Token[t] + " but encountered " + Token[current[0]]);
-	return eat();
+	    this.reportError(this.line, "Expected " + Token[t] + " but encountered " + Token[this.current[0]]);
+	let result = this.current;
+	this.current = this.ts.next();
+	return result;
     }
 
     // Skip spaces.  Return true iff the leading token then matches t.
@@ -690,24 +723,21 @@ class TokenScanner
 
     // Skip across whitespace and comments, maintaining line number.
     skipSpace():void {
-	let ts = this.ts;
 	for (;;) {
 	    switch (this.current[0]) {
-	    case Spaces:
-	    case Comment:
-		this.current = ts.next();
-		continue;
-	    case Linebreak:
+	    case Token.Spaces:
+	    case Token.Comment:
+		break;
+	    case Token.Linebreak:
 		this.line++;
-		this.current = ts.next();
-		continue;
-	    case SetLine:
-		this.line = this.extractLine(current[1]);
-		this.current = ts.next();
-		continue;
+		break;
+	    case Token.SetLine:
+		this.line = this.extractLine(this.current[1]);
+		break;
 	    default:
 		return;
 	    }
+	    this.current = this.ts.next();
 	}
     }
 }
@@ -718,75 +748,83 @@ class ParenCounter
 
     level = 0;
     isUnbalanced = false;
-    unbalanced = Token.Unused;
 
     constructor(private ts:TokenScanner) {}
 
     lookingAt(t:Token): boolean {
-	return ts.lookingAt(t);
+	return this.ts.lookingAt(t);
     }
 
     eat():[Token,string] {
-	let t = ts.eat();
+	let t = this.ts.advance();
 	switch (t[0]) {
 	case Token.EOI:
 	    break;
 	case Token.LParen:
 	case Token.LBrace:
 	case Token.LBracket:
-	    pstack.push(t[0]);
-	    level++;
+	    this.pstack.push(t[0]);
+	    this.level++;
 	    break;
 	case Token.RParen:
-	    if (pstack.pop() != Token.LParen) {
-		isUnbalanced = true;
-		unbalanced = t[0];
-	    }
-	    level--;
+	    if (this.pstack.pop() != Token.LParen)
+		this.isUnbalanced = true;
+	    this.level--;
 	    break;
 	case Token.RBrace:
-	    if (pstack.pop() != Token.LBrace) {
-		isUnbalanced = true;
-		unbalanced = t[0];
-	    }
-	    level--;
+	    if (this.pstack.pop() != Token.LBrace)
+		this.isUnbalanced = true;
+	    this.level--;
 	    break;
 	case Token.RBracket:
-	    if (pstack.pop() != Token.LBracket) {
-		isUnbalanced = true;
-		unbalanced = t[0];
-	    }
-	    level--;
+	    if (this.pstack.pop() != Token.LBracket)
+		this.isUnbalanced = true;
+	    this.level--;
 	    break;
 	}
 	return t;
     }
 }
 
-function collectDefinitions(file:string, input:string):[UserDefn[], Token[]] {
-    let defs:UserDefn[] = [];
-    let ntokens:Token[] = [];
-    let ts = new TokenScanner(new Tokenizer(input, errHandler), errHandler);
-    for (let t=ts.eat() ; t[0] != Token.EOI ; t=ts.eat()) {
-	if (t[0] == Token.FlatJS)
-	    defs.push(parseDefn(file, ts));
-	else
-	    ntokens.push(t);
-    }
-    return [defs, ntokens];
-
-    function errHandler(line:number, msg:string) {
+function standardErrHandler(file:string):(line:number,msg:string)=>void {
+    return function(line:number, msg:string):void {
 	throw new ProgramError(file, line, msg);
     }
 }
 
-function parseDefn(file:string, ts:TokenScanner): Defn {
+function collectDefinitions(file:string, input:string):[UserDefn[], [Token,string][]] {
+    let defs:UserDefn[] = [];
+    let ntokens:[Token,string][] = [];
+    let residualLines = 1;
+    let lineAfter = 1;
+    let ts = new TokenScanner(new Tokenizer(input, standardErrHandler(file)), standardErrHandler(file));
+  loop:
+    for (;;) {
+	let t = ts.advance();
+	switch (t[0]) {
+	case Token.EOI:
+	    break loop;
+	case Token.FlatJS: {
+	    residualLines += ts.line - lineAfter;
+	    defs.push(parseDefn(file, ts, residualLines));
+	    lineAfter = ts.line;
+	    break;
+	}
+	default:
+	    ntokens.push(t);
+	    break;
+	}
+    }
+    return [defs, ntokens];
+}
+
+function parseDefn(file:string, ts:TokenScanner, origin:number): UserDefn {
     let kind = ts.matchId();
     if (kind != "struct" && kind != "class")
-	throw new ProgramError(file, i, "Syntax error: Expected 'class' or 'struct'");
+	throw new ProgramError(file, ts.line, "Syntax error: Expected 'class' or 'struct'");
 
     let defLine = ts.line;
-    let name = ts.matchId();
+    let defName = ts.matchId();
 
     let inherit = "";
     if (kind == "class") {
@@ -802,31 +840,46 @@ function parseDefn(file:string, ts:TokenScanner): Defn {
     ts.match(Token.LBrace);
 
     while (!ts.lookingAt(Token.RBrace)) {
-	var memberName = ts.matchId();
-	var memberLine = ts.line;
+	let memberName = ts.matchId();
+	let memberLine = ts.line;
 
 	if (ts.lookingAt(Token.Colon)) {
-	    ts.eat();
+	    ts.next();
 	    let basename = ts.matchId();
+	    let lineOfDefn = ts.line;
 	    let qual = PropQual.None;
 	    let isArray = false;
-	    // Currently only [atomic|synchronic][Array]
+	    // Currently only [.atomic|.synchronic][.Array]
 	    if (ts.lookingAt(Token.Dot)) {
-		ts.eat();
-		var q1 = ts.matchId();
+		ts.next();
+		let mustHaveArray = false;
+		let q1 = ts.matchId();
+		lineOfDefn = ts.line;
 		if (q1 == "atomic")
 		    qual = PropQual.Atomic;
 		else if (q1 == "synchronic")
 		    qual = PropQual.Synchronic;
+		else
+		    mustHaveArray = true;
 		if (qual != PropQual.None && ts.lookingAt(Token.Dot)) {
-		    ts.eat();
+		    ts.next();
 		    q1 = ts.matchId();
+		    lineOfDefn = ts.line;
+		    mustHaveArray = true;
 		}
-		if (q1 != "Array")
-		    throw new ProgramError("'Array' required here");
-		isArray = true;
+		if (mustHaveArray) {
+		    if (q1 != "Array")
+			throw new ProgramError(file, ts.line, "'Array' required here");
+		    isArray = true;
+		}
 	    }
-	    linebreakOrSemicolon();
+	    ts.skipSpace();
+	    if (ts.line > lineOfDefn)
+		;
+	    else if (ts.lookingAt(Token.Semicolon))
+		ts.next();
+	    else
+		throw new ProgramError(file, ts.line, "Junk following definition: " + ts.current);
 
 	    properties.push(new Prop(memberLine, memberName, qual, isArray, basename));
 	}
@@ -835,22 +888,26 @@ function parseDefn(file:string, ts:TokenScanner): Defn {
 
 	    if (memberName == "virtual") {
 		if (kind == "struct")
-		    throw new ProgramError(file, line, `virtual methods are not allowed in structs`);
+		    throw new ProgramError(file, ts.line, `virtual methods are not allowed in structs`);
 		method_type = MethodKind.Virtual;
 		memberName = ts.matchId();
 	    }
 
-	    if (memberName == "set")
+	    if (memberName == "set") {
 		method_type = MethodKind.Set;
-	    else if (memberName == "get")
+		memberName = "";
+	    }
+	    else if (memberName == "get") {
 		method_type = MethodKind.Get;
+		memberName = "";
+	    }
 
 	    if (kind != "struct" && (method_type == MethodKind.Set || method_type == MethodKind.Get))
-		throw new ProgramError(file, line, MethodKind[method_type] + " methods are only allowed in structs");
+		throw new ProgramError(file, ts.line, MethodKind[method_type] + " methods are only allowed in structs");
 
 	    // This will go away
 	    if (kind == "struct" && !(method_type == MethodKind.Set || method_type == MethodKind.Get))
-		throw new ProgramError(file, line, "Methods are only allowed in classes");
+		throw new ProgramError(file, ts.line, "Methods are only allowed in classes");
 
 	    let mbody:[Token,string][] = []
 	    let pstack:Token[] = [];
@@ -867,36 +924,36 @@ function parseDefn(file:string, ts:TokenScanner): Defn {
 		    break;
 	    }
 
-	    methods.push(new Method(method_line, method_type, method_name, parseSignature(mbody), mbody));
+	    methods.push(new Method(memberLine, method_type, memberName, parseSignature(file, ts.line, mbody), mbody));
 	}
     }
 
-    match(Token.RBrace);
+    ts.match(Token.RBrace);
 
     if (kind == "class")
-	return new ClassDefn(filename, lineno, name, inherit, properties, methods, nlines.length);
+	return new ClassDefn(file, defLine, defName, inherit, properties, methods, origin);
     else
-	return new StructDefn(filename, lineno, name, properties, methods, nlines.length);
+	return new StructDefn(file, defLine, defName, properties, methods, origin);
 }
 
-function parseSignature(file:string, line:number, mbody:[Token,string]): string[] {
-    let ts2 = new TokenScanner(new Retokenizer(mbody),
-			       function(line:number, msg:string) { throw new ProgramError(file, line, msg); },
-			       line);
+function parseSignature(file:string, line:number, mbody:[Token,string][]): string[] {
+    let ts2 = new TokenScanner(new Retokenizer(mbody), standardErrHandler(file), line);
     let method_signature:string[] = [];
     ts2.match(Token.LParen);
     ts2.matchName("SELF");
-    method_signature.push("SELF");
+    // SELF is not part of the signature, it is always implied
     while (ts2.lookingAt(Token.Comma)) {
-	ts2.eat();
-	if (ts2.lookingAt(Token.DotDotDot))
-	    method_signature.push(ts2.eat());
+	ts2.next();
+	if (ts2.lookingAt(Token.DotDotDot)) {
+	    ts2.next();
+	    method_signature.push("...");
+	}
 	method_signature.push(ts2.matchId());
 	// Skip annotations, to support TypeScript etc
 	if (ts2.lookingAt(Token.Colon)) {
-	    ts2.eat();
+	    ts2.next();
 	    let pc = new ParenCounter(ts2);
-	    while (pc.level > 0 || !pc.lookingAt(Token.Comma) && !pc.lookingAt(Token.RParen))
+	    while (pc.level > 0 || !pc.lookingAt(Token.Comma) && !pc.lookingAt(Token.RParen)) {
 		let t = pc.eat();
 		if (t[0] == Token.EOI || pc.isUnbalanced)
 		    throw new ProgramError(file, ts2.line, "Unbalanced parentheses");
@@ -1004,7 +1061,7 @@ class ParamParser {
 	    }
 	}
 
-	var result = this.cleanupArg(this.input.substring(start, fellOff ? this.pos : this.pos-1));
+	let result = this.cleanupArg(this.input.substring(start, fellOff ? this.pos : this.pos-1));
 
 	// Don't consume it if we don't know if we're going to find it.
 	if (sawRightParen && !this.requireRightParen)
@@ -1377,6 +1434,14 @@ function findType(name:string):Defn {
 //
 // Macro expansion and pasteup
 
+function reFormLines(ts:[Token,string][]): SourceLine[] {
+    return ts.map(function (x) { return x[1] }).join("").split("\n").map(function (l) { return new SourceLine("", 0, l) });
+}
+
+function reFormBody(ts:[Token,string][]): string[] {
+    return ts.map(function (x) { return x[1] }).join("").split("\n");
+}
+
 const self_getter1_re = new RegExp("SELF" + Path + NullaryOperation, "g");
 const self_getter2_re = new RegExp("SELF" + Path, "g");
 const self_accessor_re = new RegExp("SELF" + Path + OperationLParen, "g");
@@ -1388,7 +1453,7 @@ const self_invoke_re = new RegExp("SELF\\.(" + Id + ")" + LParen, "g");
 function expandSelfAccessors():void {
     for ( var t of userTypes ) { // ES6 required for 'let' here
 	for ( let m of t.methods ) {
-	    let body = m.body;
+	    let body = reFormBody(m.body);
 	    for ( let k=0 ; k < body.length ; k++ ) {
 		body[k] = myExec(t.file, t.line, self_setter_re,
 				 function (file:string, line:number, s:string, p:number, m:RegExpExecArray):[string,number] {
@@ -1402,8 +1467,8 @@ function expandSelfAccessors():void {
 		});
 		body[k] = body[k].replace(self_invoke_re, function (m, id, p, s) {
 		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
-		    var pp = new ParamParser(t.file, t.line, s, p+m.length);
-		    var args = pp.allArgs();
+		    let pp = new ParamParser(t.file, t.line, s, p+m.length);
+		    let args = pp.allArgs();
 		    return t.name + "." + id + "(SELF" + (args.length > 0 ? ", " : " ");
 		});
 		body[k] = body[k].replace(self_getter1_re, function (m, path, operation, p, s) {
@@ -1415,9 +1480,71 @@ function expandSelfAccessors():void {
 		    return t.name + path + "(SELF)";
 		});
 	    }
+	    m.bodyLines = body;
 	}
     }
 }
+
+// function expandSelfAccessors():void {
+//     for ( var t of userTypes ) { // ES6 required for 'let' here
+// 	for ( let m of t.methods ) {
+// 	    let body = m.body;
+// 	    for ( let k=0 ; k < body.length ; k++ ) {
+// 		if (body[k][0] == Token.Id && body[k][1] == "SELF") {
+// 		    if (body[k+1][0] != Token.Dot)
+// 			continue;
+// 		    // Collect a path, no interior element should be SELF or an operator
+// 		    // Apply in order:
+// 		    // If the path ends with "ref" or "notify" then it must not be followed by leftparen
+// 		    // If the path ends with another operator then it must be followed by leftparen, we do arity checking
+// 		    // If the path is followed by assignment, it's an assignment op, we must parse the rhs
+// 		    // If the path is followed by leftparen then it's an invocation
+// 		    // Otherwise it is a simple field reference
+// 		    //
+// 		    // Arguments to assignment and operators are themselves subject to substitution, I smell recursion
+// 		    //
+
+// const OpNames = "at|get|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
+// const Operation = "(?:\\.(" + OpNames + "))";
+// const OperationOpt = Operation + "?";
+// const OperationLParen = "(?:\\.(" + OpNames + ")" + LParen + ")";
+// const NullaryOperation = "(?:\\.(ref|notify))";
+// const Path = "((?:\\." + Id + ")+)";
+//
+// const self_getter1_re = new RegExp("SELF" + Path + NullaryOperation, "g");
+// const self_getter2_re = new RegExp("SELF" + Path, "g");
+// const self_accessor_re = new RegExp("SELF" + Path + OperationLParen, "g");
+// const self_setter_re = new RegExp("SELF" + Path + Os + AssignOp + Os, "g");
+// const self_invoke_re = new RegExp("SELF\\.(" + Id + ")" + LParen, "g");
+
+// 		body[k] = myExec(t.file, t.line, self_setter_re,
+// 				 function (file:string, line:number, s:string, p:number, m:RegExpExecArray):[string,number] {
+// 				     if (p > 0 && isSubsequent(s.charAt(p-1))) return [s, p+m.length];
+// 				     return replaceSetterShorthand(file, line, s, p, m, t);
+// 				 },
+// 				 body[k]);
+// 		body[k] = body[k].replace(self_accessor_re, function (m, path, operation, p, s) {
+// 		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
+// 		    return t.name + path + "." + operation + "(SELF, ";
+// 		});
+// 		body[k] = body[k].replace(self_invoke_re, function (m, id, p, s) {
+// 		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
+// 		    var pp = new ParamParser(t.file, t.line, s, p+m.length);
+// 		    var args = pp.allArgs();
+// 		    return t.name + "." + id + "(SELF" + (args.length > 0 ? ", " : " ");
+// 		});
+// 		body[k] = body[k].replace(self_getter1_re, function (m, path, operation, p, s) {
+// 		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
+// 		    return t.name + path + "." + operation + "(SELF)";
+// 		});
+// 		body[k] = body[k].replace(self_getter2_re, function (m, path, p, s) {
+// 		    if (p > 0 && isSubsequent(s.charAt(p-1))) return m;
+// 		    return t.name + path + "(SELF)";
+// 		});
+// 	    }
+// 	}
+//     }
+// }
 
 // We've eaten "SELF.id op " and need to grab a plausible RHS.
 //
@@ -1470,11 +1597,11 @@ function linePusher(info:() => [string,number], nlines:SourceLine[]): (text:stri
 }
 
 function pasteupTypes():void {
-    var emitFn = "";		// ES5 workaround - would otherwise be local to inner "for" loop
-    var emitLine = 0;		// ditto
+    let emitFn = "";		// ES5 workaround - would otherwise be local to inner "for" loop
+    let emitLine = 0;		// ditto
     for ( let source of allSources ) {
 	let defs = source.defs;
-	let lines = source.lines;
+	let lines = reFormLines(source.tokens);
 	let nlines: SourceLine[] = [];
 	let k = 0;
 	for ( let d of defs ) {
@@ -1536,7 +1663,7 @@ function pasteupTypes():void {
 		    name += "_impl";
 		emitFn = d.file + "[method " + name + "]";
 		emitLine = m.line;
-		let body = m.body;
+		let body = m.bodyLines; // Hack
 		// Formatting: useful to strip all trailing blank lines from
 		// the body first.
 		let last = body.length-1;
@@ -1555,13 +1682,13 @@ function pasteupTypes():void {
 	    // Now default methods, if appropriate.
 
 	    if (d.kind == DefnKind.Struct) {
-		var struct = <StructDefn> d;
+		let struct = <StructDefn> d;
 		if (!haveGetter) {
 		    push(d.name + "._get_impl = function (SELF) {");
 		    push("  var v = new " + d.name + ";");
 		    // Use longhand for access, since self accessors are expanded before pasteup.
 		    // TODO: Would be useful to fix that.
-		    for ( var p of d.props )
+		    for ( let p of d.props )
 			push("  v." + p.name + " = " + d.name + "." + p.name + "(SELF);");
 		    push("  return v;");
 		    push("}");
@@ -1571,7 +1698,7 @@ function pasteupTypes():void {
 		if (!haveSetter) {
 		    push(d.name + "._set_impl = function (SELF, v) {");
 		    // TODO: as above.
-		    for ( var p of d.props )
+		    for ( let p of d.props )
 			push("  " + d.name + "." + p.name + ".set(SELF, v." + p.name + ");");
 		    push("}");
 		    struct.hasSetMethod = true;
@@ -1640,6 +1767,17 @@ const acc_re = new RegExp("(" + Id + ")" + PathOptLazy + "(?:" + Operation + "|)
 
 // It would sure be nice to avoid the explicit ".Array" here, but I don't yet know how.
 const arr_re = new RegExp("(" + Id + ")" + QualifierOpt + "\\.Array" + PathOpt + Operation + LParen, "g");
+
+// Field accessors:
+//
+// For every ID not inside a path, if it names a known type and is followed by ., collect a path, no interior element should be SELF or an operator
+// The path must be followed by "(".
+// Apply in order:
+// If the path ends with any operator then it must be followed by leftparen, we do arity checking
+// If the path references a field then it is a field reference
+// Otherwise it is an invocation, so leave it alone.  [Ideally: check against available methods, but patching is allowed]
+//
+// Arguments are themselves subject to substitution, I smell more recursion.
 
 function expandMacrosIn(file:string, line:number, text:string):string {
     return myExec(file, line, new_re, newMacro,

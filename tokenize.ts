@@ -155,8 +155,8 @@ class Tokenizer implements Tokensource
     next(): [Token,string] {
 	for (;;) {
 	    if (this.adjustLineNumber) {
-		adjustLineNumber = false;
-		return [Token.SetLine,"/*" + lineNumber + "*/"];
+		this.adjustLineNumber = false;
+		return [Token.SetLine,"/*" + this.lineNumber + "*/"];
 	    }
 
 	    if (this.loc == this.end)
@@ -252,7 +252,7 @@ class Tokenizer implements Tokensource
     }
 
     private lexString(terminator:string): [Token,string] {
-	let s = "";
+	let s = terminator;
 	let c = " ";
 	for (;;) {
 	    if (this.loc == this.end)
@@ -269,13 +269,33 @@ class Tokenizer implements Tokensource
 		s += this.input.charAt(this.loc++);
 	    }
 	}
+	s += terminator;
 	return [Token.Other, s];
     }
 
+    // TODO: Implement this properly - presumably there are escape
+    // characters, at a minimum.
     private lexTemplate(): [Token,string] {
-	// TODO: Implement this
-	this.reportError(this.lineNumber, "Template strings not yet supported");
-	return [Token.Other,""];
+	let s = "`";
+	let lineBefore = this.lineNumber;
+	for (;;) {
+	    if (this.loc == this.end)
+		this.reportError(this.lineNumber, "End-of-file inside template string");
+	    let c = this.input.charAt(this.loc++);
+	    if (this.isLinebreak(c)) {
+		let [t,q] = this.lexLinebreak(c);
+		s += q;
+	    }
+	    else
+		s += c;
+	    if (c == "`")
+		break;
+	}
+	if (this.lineNumber > lineBefore)
+	    this.adjustLineNumber = true;
+	// TODO: either get rid of Token.Comment and rely on line breaks to handle ASI,
+	// or we need a similar token here.
+	return [Token.Other,s];
     }
 
     // Returns null if this is thought not to be a regex, otherwise
@@ -371,7 +391,7 @@ class Tokenizer implements Tokensource
 	}
 
 	if (this.lineNumber > lineBefore) {
-	    adjustLineNumber = true;
+	    this.adjustLineNumber = true;
 	    return [Token.Comment, s];
 	}
 	return [Token.Spaces, s];

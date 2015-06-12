@@ -10,18 +10,17 @@ FlatJS.init(ab, 0, ab.byteLength, true);
     count:int32.synchronic
     xyzzy:uint8.synchronic
 
-    @method init(SELF, x) {
+    init(SELF, x) {
 	SELF.count.set(x);	// synchronic store
 	return SELF;
     }
 
     // Should turn into synchronic ops.
-
-    @method fnord(SELF) {
+    fnord(SELF) {
 	SELF.count = 0;
 	SELF.count += 5;
     }
-} @end
+}
 
 var c = Counter.init(@new Counter, 7);
 
@@ -50,7 +49,7 @@ assertEq(Counter.xyzzy(c), 384%256);
 
 @flatjs struct Cnt {
     count:int32.synchronic
-} @end
+}
 
 var p = @new Cnt.Array(10);
 

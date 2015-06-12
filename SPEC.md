@@ -2,9 +2,9 @@
 
 ## Introduction
 
-FlatJS is a "language fragment" layered on JavaScript (and JS dialects)
-that allows programs to use flat memory (ArrayBuffer and SharedArrayBuffer)
-conveniently with good performance.
+FlatJS is a "language fragment" layered on JavaScript that allows
+programs to use flat memory (ArrayBuffer and SharedArrayBuffer)
+conveniently and with good performance.
 
 FlatJS provides structs, classes, and arrays within flat memory, as
 well as atomic and synchronic fields when using shared memory.  There
@@ -23,35 +23,20 @@ within a single JavaScript context.
 
 ## Caveats
 
-For ease of processing *only*, the syntax is currently line-oriented:
-Line breaks are explicit in the grammars below and some ```@``` characters
-appear here and there to make recognition easier.  Please don't get
-hung up on this, it's mostly a matter of programming to fix it but that
-is not my focus right now.
+The translator is implemented by means of a superficial parser and a
+nonhygienic macro expander.  Occasionally this leads to problems.
+Some things to watch out for:
 
-The translator is implemented by means of a set of regular expression
-matchers and an unforgiving, context-insensitive, nonhygienic macro
-expander.  Occasionally this leads to problems.  Some things to watch
-out for:
-
-* Treat all operation names (get, set, at, setAt, ref, add, etc, see below)
-  as reserved words - do not name your fields with those identifiers.
 * Do not use expressions containing template strings or regular expressions
   in the arguments to accessor macros (including array accessors).
-* Do not split calls to accessors across multiple source lines, because
-  frequently the translator must scan for the end of the call
-* If using the assignment shorthand, keep the right-hand-side entirely
-  on the same line as the assignment operator.
-* Occasionally, the translator fails to parenthesize code correctly because
-  it can't insert parentheses blindly as that interacts badly with
-  automatic semicolon insertion (yay JavaScript).  When in doubt, use
-  semicolons.
+* Occasionally, the translator may fail to parenthesize code correctly
+  because it can't insert parentheses blindly as that interacts badly
+  with automatic semicolon insertion (yay JavaScript).  When in doubt,
+  use semicolons.
 
 Failures to obey these rules will sometimes lead to mysterious parsing
 and runtime errors.  A look at the generated code is usually enough to
 figure out what's going on; problems tend to be local.
-
-It's a goal to make the macro substitution more reliable.
 
 
 ## Programs
@@ -97,15 +82,11 @@ with named, mutable fields.
 ### Syntax
 
 ```
-  Struct-def ::= (lookbehind EOL)
-                 "@flatjs" "struct" Id "{" Comment? EOL
-                 ((Comment | Field) EOL)*
-                 ((Comment | Struct-Method) EOL)*
-                 "}" "@end" Comment? EOL
+  Struct-def ::= "@flatjs" "struct" Id "{"
+                 (Comment | Field | Struct-Method)*
+                 "}"
 
-  Field ::= Ident ":" Type ";"? Comment? EOL
-
-  Comment ::= "//" Not-EOL*
+  Field ::= Ident ":" Type (";"|EOL)
 
   Type ::= ValType | ArrayType
   ValType ::= ("int8" | "uint8" | "int16" | "uint16" | "int32" | "uint32") (".atomic" | ".synchronic")?
@@ -114,21 +95,16 @@ with named, mutable fields.
             | Id
   ArrayType ::= ValType ".Array"
 
-  Struct-Method ::= "@get" "(" "SELF" ")" Function-body
-                  | "@set" "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
+  Struct-Method ::= "get" "(" "SELF" ")" Function-body
+                  | "set" "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
 
   Parameter ::= Id (":" Tokens-except-comma-or-rightparen )?
 
   Id ::= [A-Za-z_][A-Za-z0-9_]*
 ```
 
-Note the following:
-
-* The annotation on the Parameter is not used by FlatJS, but is allowed in order
-  to interoperate with TypeScript.
-* The restriction of properties before methods is a matter of economizing on the
-  markup; as it is, properties don't need eg ```@var``` before them.  This restriction
-  can be lifted once we have a better parser, see Issue #11.
+NOTE: The annotation on the Parameter is not used by FlatJS, but is
+allowed in order to interoperate with TypeScript.
 
 
 ### Static semantics
@@ -138,6 +114,14 @@ Every field name in a struct must be unique within that struct.
 A field of struct type gives rise to a named substructure within the
 outer structure that contains the fields of the nested struct.  No struct
 may in this way include itself.
+
+No field may be named with the name of an operator: set, at, setAt,
+ref, add, sub, and, or, xor, compareExchange, loadWhenEqual,
+loadWhenNotEqual, expectUpdate, or notify.
+
+No field may be named SELF.
+
+The first parameter of a method is always the keyword SELF.
 
 
 ### Dynamic semantics
@@ -180,16 +164,16 @@ Field accessors for all field types:
 * R.Fk(self) => Shorthand for R.fk.get(self)
 * R.Fk.get(self) => value of self.Fk field
   If the field is a structure then the getter reifies the structure as a JavaScript object.
-  If the field type T does not have a ```@get``` method then the getter returns a new instance
+  If the field type T does not have a ```get``` method then the getter returns a new instance
   of the JavaScript type R, with properties whose values are the values
   extracted from the flat object, with standard getters.  If T does have
-  a ```@get``` method then R.Fk(self) invokes that method on SELF.Fk.ref and returns its
+  a ```get``` method then R.Fk(self) invokes that method on SELF.Fk.ref and returns its
   result.
 * R.Fk.set(self, v) => void; set value of self.Fk field to v.
   If the field is a structure then the setter is a function that updates the shared object from ```v```.
-  If the field type T does not have a ```@set``` method then this method will set each field
+  If the field type T does not have a ```set``` method then this method will set each field
   of self.Fk in order from same-named properties extracted from ```value```.
-  If T does have a ```@set``` method then this method will invoke that method
+  If T does have a ```set``` method then this method will invoke that method
   on SELF.Fk.ref and ```value```.
 * R.Fk.ref(self, v) => reference to the self.Fk field
 
@@ -238,13 +222,11 @@ A class definition takes the form of a number of fields followed
 by a number of methods:
 
 ```
-  Class-def ::= (lookbehind EOL)
-                "@flatjs" "class" Id ("extends" Id)? "{" Comment? EOL
-                ((Comment | Field) EOL)*
-                ((Comment | Class-Method) EOL)*
-                "}" "@end" Comment? EOL
+  Class-def ::= "@flatjs" "class" Id ("extends" Id)? "{"
+                (Comment | Field | Class-Method)*
+                "}"
 
-  Class-method ::= ("@method"|"@virtual") Id "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
+  Class-method ::= "virtual"? Id "(" "SELF" ("," Parameter)* ("," "..." Id)? ")" Function-body
 ```
 
 ### Static semantics
@@ -271,10 +253,11 @@ class is said to override the base class method.  Overriding methods
 must have the same signature (number and types of arguments) as the
 overridden method.
 
-The first argument to a method is always the keyword SELF.
+The first parameter of a method is always the keyword SELF.
 
-As for structs, a field of struct type gives rise to a named substructure
-within the outer class that contains the fields of the nested struct.
+As for structs, a field of struct type gives rise to a named
+substructure within the outer class that contains the fields of the
+nested struct.  Restrictions on field names are as for struct.
 
 A field of class type gives rise to a pointer field.
 
@@ -375,11 +358,11 @@ Suppose A is some type.
 * A.Array.at(ptr, i) reads the ith element of an array of A
   whose base address is ptr.  Not bounds checked.  If the base
   type of the array is a structure type this will only work if
-  the type has a ```@get``` method.
+  the type has a ```get``` method.
 * A.Array.setAt(ptr, i, v) writes the ith element of an array of A
   whose base address is ptr.  Not bounds checked.  If the base
   type of the array is a structure type this will only work if
-  the type has an ```@set``` method.
+  the type has an ```set``` method.
 * A.Array.ref(ptr, i) returns a reference to the ith element.
 * If the base type A is a structure type then the path to a field
   within the structure can be denoted: A.Array.x.y.at(ptr, i)

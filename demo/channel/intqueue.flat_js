@@ -23,13 +23,13 @@
     queue: int32.Array
     length: int32
 
-    @method init(SELF, length) {
+    init(SELF, length) {
 	SELF.length = length;
 	SELF.queue = @new int32.Array(length);
 	return SELF;
     }
 
-    @method enqueue(SELF, ints, timeout) {
+    enqueue(SELF, ints, timeout) {
 	var required = ints.length + 1;
 
 	if (!SELF.acquireWithSpaceAvailable(required, timeout))
@@ -51,7 +51,7 @@
 	return true;
     }
 
-    @method dequeue(SELF, timeout) {
+    dequeue(SELF, timeout) {
 	if (!SELF.acquireWithDataAvailable(timeout))
 	    return null;
 
@@ -72,7 +72,7 @@
 	return A;
     }
 
-    @method acquireWithSpaceAvailable(SELF, required, t) {
+    acquireWithSpaceAvailable(SELF, required, t) {
 	var limit = typeof t != "undefined" ? Date.now() + t : Number.POSITIVE_INFINITY;
 	for (;;) {
 	    SELF.acquire();
@@ -90,7 +90,7 @@
 	}
     }
 
-    @method acquireWithDataAvailable(SELF, t) {
+    acquireWithDataAvailable(SELF, t) {
 	var limit = typeof t != "undefined" ? Date.now() + t : Number.POSITIVE_INFINITY;
 	for (;;) {
 	    SELF.acquire();
@@ -105,23 +105,23 @@
 	}
     }
 
-    @method releaseWithSpaceAvailable(SELF) {
+    releaseWithSpaceAvailable(SELF) {
 	SELF.spaceAvailable += 1;
 	SELF.release();
     }
 
-    @method releaseWithDataAvailable(SELF) {
+    releaseWithDataAvailable(SELF) {
 	SELF.dataAvailable += 1;
 	SELF.release();
     }
 
-    @method acquire(SELF) {
+    acquire(SELF) {
 	while (SELF.lock.compareExchange(0, 1) != 0)
 	    SELF.lock.expectUpdate(1, Number.POSITIVE_INFINITY);
     }
 
-    @method release(SELF) {
+    release(SELF) {
 	SELF.lock = 0;
     }
 
-} @end
+}

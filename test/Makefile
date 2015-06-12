@@ -1,5 +1,5 @@
 JSSHELL=../../mozilla-shmem/js/src/build-release/dist/bin/js
-FJSC=nodejs ../fjsc.js
+FJSC=nodejs ../fjsc-exe.js
 
 test:
 	$(FJSC) basic-tests.flat_js
