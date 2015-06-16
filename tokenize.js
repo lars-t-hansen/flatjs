@@ -32,9 +32,10 @@ var Token;
     Token[Token["Linebreak"] = 16] = "Linebreak";
     Token[Token["Comment"] = 17] = "Comment";
     Token[Token["SetLine"] = 18] = "SetLine";
-    Token[Token["FlatJS"] = 19] = "FlatJS";
-    Token[Token["New"] = 20] = "New";
-    Token[Token["EOI"] = 21] = "EOI"; // Always the last token
+    Token[Token["SetFile"] = 19] = "SetFile";
+    Token[Token["FlatJS"] = 20] = "FlatJS";
+    Token[Token["New"] = 21] = "New";
+    Token[Token["EOI"] = 22] = "EOI"; // Always the last token
 })(Token || (Token = {}));
 ;
 var optrie = (function () {

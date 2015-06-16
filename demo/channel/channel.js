@@ -1,4 +1,4 @@
-// Generated from channel.flat_js by fjsc 0.5; github.com/lars-t-hansen/flatjs
+// Generated from channel.flat_js by fjsc 0.6; github.com/lars-t-hansen/flatjs
 /* -*- mode: javascript -*- */
 
 /* This Source Code Form is subject to the terms of the Mozilla Public

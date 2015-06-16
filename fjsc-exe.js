@@ -32,9 +32,10 @@ var Token;
     Token[Token["Linebreak"] = 16] = "Linebreak";
     Token[Token["Comment"] = 17] = "Comment";
     Token[Token["SetLine"] = 18] = "SetLine";
-    Token[Token["FlatJS"] = 19] = "FlatJS";
-    Token[Token["New"] = 20] = "New";
-    Token[Token["EOI"] = 21] = "EOI"; // Always the last token
+    Token[Token["SetFile"] = 19] = "SetFile";
+    Token[Token["FlatJS"] = 20] = "FlatJS";
+    Token[Token["New"] = 21] = "New";
+    Token[Token["EOI"] = 22] = "EOI"; // Always the last token
 })(Token || (Token = {}));
 ;
 var optrie = (function () {
@@ -856,7 +857,7 @@ var SSet = (function () {
     };
     return SSet;
 })();
-// A hack
+// Temporary hack
 var SourceLine = (function () {
     function SourceLine(file, line, text) {
         this.file = file;
@@ -871,8 +872,7 @@ var Source = (function () {
         this.output_file = output_file;
         this.defs = defs;
         this.tokens = tokens;
-        // A hack for testing
-        this.lines = null;
+        this.lines = null; // A hack
     }
     Source.prototype.allText = function () {
         if (this.lines)
@@ -980,16 +980,12 @@ var TokenScanner = (function () {
                 this.line++;
                 break;
             case Token.SetLine:
-                this.line = this.extractLine(this.current[1]);
+                this.line = extractLine(this.current[1]);
                 break;
         }
         var result = this.current;
         this.current = this.ts.next();
         return result;
-    };
-    // Given a string of the form "/*n*/", return n as a number.
-    TokenScanner.prototype.extractLine = function (tk) {
-        return parseInt(tk.substring(2, tk.length - 2));
     };
     // Shorthand for matching an Id with the given ID name.
     TokenScanner.prototype.matchName = function (name) {
@@ -1030,6 +1026,10 @@ var TokenScanner = (function () {
     };
     return TokenScanner;
 })();
+// Given a string of the form "/*n*/", return n as a number.
+function extractLine(tk) {
+    return parseInt(tk.substring(2, tk.length - 2));
+}
 var ParenCounter = (function () {
     function ParenCounter(ts) {
         this.ts = ts;
@@ -1104,11 +1104,6 @@ var TokenTransducer = (function (_super) {
     };
     return TokenTransducer;
 })(TokenScanner);
-function standardErrHandler(file) {
-    return function (line, msg) {
-        throw new ProgramError(file, line, msg);
-    };
-}
 var TokenSet = (function () {
     function TokenSet() {
         var tokens = [];
@@ -1284,14 +1279,25 @@ function parseSignature(file, line, mbody) {
 // Parse one argument expression, ends at rightparen or comma@level0, EOI is an error.
 // Does not consume either of the terminators.  Any leading leftparen has been skipped.
 // An empty expression is an error.
-//
-// Used by the macro expander.
 function parseArgument(file, line, tokens) {
     return parseExpr(file, line, tokens, new TokenSet(Token.Comma, Token.RParen));
 }
-// As parseArgument but also end at linebreak at nesting level 0 and right brace
+// Parse one stand-alone expression.  This is necessarily approximate
+// since we don't do accurate ASI.  So stop at a linebreak when at
+// paren level 0; when a right paren would unbalance the expression.
+//
+// Another problem is whether to stop at comma or not.  If the
+// expression happens to be within an argument list, ie, f(x, y=z, w),
+// then we should, but if it isn't, and it is a comma expression, then
+// we shouldn't.  The former case is probably more common, so bias in
+// favor of it.
+//
+// An interesting issue here is if semicolon should stop parsing or be
+// an error even not at level 0.  EOI is an error if not at level 0.
+// TODO: Document that comma expressions are brittle on the rhs of
+// assignment, maybe other places.
 function parseExpression(file, line, tokens) {
-    return parseExpr(file, line, tokens, new TokenSet(Token.Comma, Token.RParen, Token.RBrace, Token.Linebreak, Token.Comment, Token.Semicolon, Token.EOI));
+    return parseExpr(file, line, tokens, new TokenSet(Token.Comma, Token.RParen, Token.RBrace, Token.RBracket, Token.Linebreak, Token.Comment, Token.Semicolon, Token.EOI));
 }
 function parseExpr(file, line, ts2, stopset) {
     var pc = new ParenCounter(ts2);
@@ -1300,7 +1306,9 @@ function parseExpr(file, line, ts2, stopset) {
         var t = pc.advance();
         if (t[0] == Token.EOI || pc.isUnbalanced)
             throw new ProgramError(file, ts2.line, "Unbalanced parentheses");
-        if (t[0] != Token.Spaces && t[0] != Token.Comment && t[0] != Token.Linebreak)
+        if (t[0] == Token.Spaces || t[0] == Token.Comment || t[0] == Token.Linebreak)
+            expr.push([Token.Spaces, " "]);
+        else
             expr.push(t);
     }
     if (expr.length == 0)
@@ -1908,63 +1916,87 @@ function doExpandSelfAccessors(t, tokens, line) {
     }
     return ts2.tokens;
 }
-// MEN AT WORK
-function reFormLines(ts) {
-    return ts.map(function (x) { return x[1]; }).join("").split("\n").map(function (l) { return new SourceLine("", 0, l); });
-}
-function reFormBody(ts) {
-    return ts.map(function (x) { return x[1]; }).join("").split("\n");
-}
-function linePusher(info, nlines) {
-    return function (text) {
-        var _a = info(), file = _a[0], line = _a[1];
-        nlines.push(new SourceLine(file, line, text));
-    };
-}
-// NOW DO:
-// - this should operate on tokens and leave tokens in place
-// - reFormBody goes away completely
-// - the next stage, expandGlobalAccessorsAndMacros, can start out by applying reFormLines.
-// - we can just use "Other" tokens for inserted boilerplate, it won't be subject to macro expansion.
 function pasteupTypes() {
-    var emitFn = ""; // ES5 workaround - would otherwise be local to inner "for" loop
-    var emitLine = 0; // ditto
+    // ES5 hacks
+    function otherPusher(ntokens) {
+        return function (text) {
+            ntokens.push([Token.Other, text]);
+        };
+    }
+    function linebreakPusher(ntokens) {
+        return function () {
+            ntokens.push([Token.Linebreak, "\n"]);
+        };
+    }
+    function manyPusher(ntokens) {
+        return function () {
+            var xs = [];
+            for (var _i = 0; _i < arguments.length; _i++) {
+                xs[_i - 0] = arguments[_i];
+            }
+            for (var _a = 0; _a < xs.length; _a++) {
+                var x = xs[_a];
+                ntokens.push(x);
+            }
+        };
+    }
     for (var _i = 0; _i < allSources.length; _i++) {
         var source = allSources[_i];
         var defs = source.defs;
-        var lines = reFormLines(source.tokens);
-        var nlines = [];
+        var tokens = source.tokens;
+        var ntokens = [];
         var k = 0;
+        var lineno = 1;
+        var push = otherPusher(ntokens);
+        var pushLinebreak = linebreakPusher(ntokens);
+        var pushMany = manyPusher(ntokens);
         for (var _a = 0; _a < defs.length; _a++) {
             var d = defs[_a];
-            while (k < d.origin && k < lines.length)
-                nlines.push(lines[k++]);
-            var push = linePusher(function () { return [emitFn, emitLine++]; }, nlines);
-            emitFn = d.file + "[class definition]";
-            emitLine = d.line;
+            while (lineno < d.origin && k < tokens.length) {
+                var t = void 0;
+                ntokens.push((t = tokens[k++]));
+                switch (t[0]) {
+                    case Token.Linebreak:
+                        lineno++;
+                        break;
+                    case Token.SetLine:
+                        lineno = extractLine(t[1]);
+                        break;
+                }
+            }
+            ntokens.push([Token.SetFile, "/*" + d.file + "[class definition]*/"]);
+            ntokens.push([Token.SetLine, "/*" + d.line + "*/"]);
+            pushLinebreak();
             if (d.kind == DefnKind.Class)
                 push("function " + d.name + "(p) { this._pointer = (p|0); }");
             else
                 push("function " + d.name + "() {}");
+            pushLinebreak();
             if (d.kind == DefnKind.Class) {
                 var cls = d;
                 if (cls.baseName)
                     push(d.name + ".prototype = new " + cls.baseName + ";");
                 else
                     push("Object.defineProperty(" + d.name + ".prototype, 'pointer', { get: function () { return this._pointer } });");
+                pushLinebreak();
             }
             push(d.name + ".NAME = \"" + d.name + "\";");
+            pushLinebreak();
             push(d.name + ".SIZE = " + d.size + ";");
+            pushLinebreak();
             push(d.name + ".ALIGN = " + d.align + ";");
+            pushLinebreak();
             if (d.kind == DefnKind.Class) {
                 var cls = d;
                 push(d.name + ".CLSID = " + cls.classId + ";");
+                pushLinebreak();
                 push("Object.defineProperty(" + d.name + ", 'BASE', {get: function () { return " + (cls.baseName ? cls.baseName : "null") + "; }});");
+                pushLinebreak();
             }
             // Now do methods.
             //
             // Implementation methods are emitted directly in the defining type, with a name suffix _impl.
-            // For struct methods, the name is "_get_impl", "_set_impl", or "_copy_impl".
+            // For struct methods, the name is "_get_impl" or "_set_impl"
             var haveSetter = false;
             var haveGetter = false;
             for (var _b = 0, _c = d.methods; _b < _c.length; _b++) {
@@ -1990,97 +2022,116 @@ function pasteupTypes() {
                     ;
                 else
                     name_2 += "_impl";
-                emitFn = d.file + "[method " + name_2 + "]";
-                emitLine = m.line;
-                var body = reFormBody(m.body); // Hack
-                // Formatting: useful to strip all trailing blank lines from
-                // the body first.
-                //
-                // FIXME: Obviously with tokens we'd operate on blank/comment tokens.
-                var last = body.length - 1;
-                while (last > 0 && /^\s*$/.test(body[last]))
-                    last--;
-                if (last == 0)
-                    push(d.name + "." + name_2 + " = function " + body[0]);
-                else {
-                    push(d.name + "." + name_2 + " = function " + body[0]);
-                    for (var x = 1; x < last; x++)
-                        push(body[x]);
-                    push(body[last]);
+                pushMany([Token.SetFile, "/*" + d.file + "[method " + name_2 + "]*/"], [Token.SetLine, "/*" + m.line + "*/"]);
+                pushLinebreak();
+                pushMany([Token.Id, d.name], [Token.Dot, "."], [Token.Id, name_2], [Token.Assign, "="], [Token.Id, "function"]);
+                for (var _d = 0, _e = m.body; _d < _e.length; _d++) {
+                    var token = _e[_d];
+                    ntokens.push(token);
                 }
+                pushLinebreak();
             }
             // Now default methods, if appropriate.
             if (d.kind == DefnKind.Struct) {
                 var struct = d;
                 if (!haveGetter) {
-                    push(d.name + "._get_impl = function (SELF) {");
-                    push("  var v = new " + d.name + ";");
+                    var local = gensym();
+                    pushMany([Token.Id, d.name], [Token.Dot, "."], [Token.Id, "_get_impl"], [Token.Assign, "="], [Token.Id, "function"], [Token.LParen, "("], [Token.Id, "SELF"], [Token.RParen, ")"], [Token.LBrace, "{"]);
+                    pushLinebreak();
+                    pushMany([Token.Id, "var"], [Token.Spaces, " "], [Token.Id, local], [Token.Assign, "="], [Token.Id, "new"], [Token.Spaces, " "], [Token.Id, d.name], [Token.Semicolon, ";"]);
+                    pushLinebreak();
                     // Use longhand for access, since self accessors are expanded before pasteup.
                     // TODO: Would be useful to fix that.
-                    for (var _d = 0, _e = d.props; _d < _e.length; _d++) {
-                        var p = _e[_d];
-                        push("  v." + p.name + " = " + d.name + "." + p.name + "(SELF);");
+                    for (var _f = 0, _g = d.props; _f < _g.length; _f++) {
+                        var p = _g[_f];
+                        pushMany([Token.Id, local], [Token.Dot, "."], [Token.Id, p.name], [Token.Assign, "="], [Token.Id, d.name], [Token.Dot, "."], [Token.Id, p.name], [Token.LParen, "("], [Token.Id, "SELF"], [Token.RParen, ")"], [Token.Semicolon, ";"]);
+                        pushLinebreak();
                     }
-                    push("  return v;");
-                    push("}");
+                    pushMany([Token.Id, "return"], [Token.Spaces, " "], [Token.Id, local], [Token.Semicolon, ";"]);
+                    pushLinebreak();
+                    ntokens.push([Token.RBrace, "}"]);
+                    pushLinebreak();
                     struct.hasGetMethod = true;
                 }
                 if (!haveSetter) {
-                    push(d.name + "._set_impl = function (SELF, v) {");
-                    // TODO: as above.
-                    for (var _f = 0, _g = d.props; _f < _g.length; _f++) {
-                        var p = _g[_f];
-                        push("  " + d.name + "." + p.name + ".set(SELF, v." + p.name + ");");
+                    var local = gensym();
+                    pushMany([Token.Id, d.name], [Token.Dot, "."], [Token.Id, "_set_impl"], [Token.Assign, "="], [Token.Id, "function"], [Token.LParen, "("], [Token.Id, "SELF"], [Token.Comma, ","], [Token.Id, local], [Token.RParen, ")"], [Token.LBrace, "{"]);
+                    pushLinebreak();
+                    // TODO: as above, useful to be able to use shorthand?
+                    for (var _h = 0, _j = d.props; _h < _j.length; _h++) {
+                        var p = _j[_h];
+                        pushMany([Token.Id, d.name], [Token.Dot, "."], [Token.Id, p.name], [Token.Dot, "."], [Token.Id, "set"], [Token.LParen, "("], [Token.Id, "SELF"], [Token.Comma, ","], [Token.Id, local], [Token.Dot, "."], [Token.Id, p.name], [Token.RParen, ")"], [Token.Semicolon, ";"]);
+                        pushLinebreak();
                     }
-                    push("}");
+                    ntokens.push([Token.RBrace, "}"]);
+                    pushLinebreak();
                     struct.hasSetMethod = true;
                 }
             }
             // Now do vtable, if appropriate.
             if (d.kind == DefnKind.Class) {
                 var cls = d;
-                for (var _h = 0, _j = cls.vtable; _h < _j.length; _h++) {
-                    var virtual = _j[_h];
+                for (var _k = 0, _l = cls.vtable; _k < _l.length; _k++) {
+                    var virtual = _l[_k];
                     // Shouldn't matter much
-                    emitFn = d.file + "[vtable " + virtual.name + "]";
-                    emitLine = d.line;
+                    ntokens.push([Token.SetFile, "/*" + d.file + "[vtable " + virtual.name + "]*/"]);
+                    ntokens.push([Token.SetLine, "/*" + d.line + "*/"]);
+                    pushLinebreak();
                     var signature = virtual.signature();
                     push(d.name + "." + virtual.name + " = function (SELF " + signature + ") {");
+                    pushLinebreak();
                     push("  switch (_mem_int32[SELF>>2]) {");
+                    pushLinebreak();
                     var kv = virtual.reverseCases.keysValues();
-                    for (var _k = kv.next(), name_3 = _k[0], cases = _k[1]; name_3; (_l = kv.next(), name_3 = _l[0], cases = _l[1], _l)) {
-                        for (var _m = 0; _m < cases.length; _m++) {
-                            var c = cases[_m];
+                    for (var _m = kv.next(), name_3 = _m[0], cases = _m[1]; name_3; (_o = kv.next(), name_3 = _o[0], cases = _o[1], _o)) {
+                        for (var _p = 0; _p < cases.length; _p++) {
+                            var c = cases[_p];
                             push("    case " + c + ":");
+                            pushLinebreak();
                         }
                         push("      return " + name_3 + "(SELF " + signature + ");");
+                        pushLinebreak();
                     }
                     push("    default:");
+                    pushLinebreak();
                     push("      " + (virtual.default_ ?
                         "return " + virtual.default_ + "(SELF " + signature + ")" :
                         "throw FlatJS._badType(SELF)") + ";");
+                    pushLinebreak();
                     push("  }");
+                    pushLinebreak();
                     push("}");
+                    pushLinebreak();
                 }
             }
             // Now do other methods: initInstance.
             if (d.kind == DefnKind.Class) {
                 var cls = d;
                 push(d.name + ".initInstance = function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; }");
+                pushLinebreak();
             }
-            if (d.kind == DefnKind.Class)
+            if (d.kind == DefnKind.Class) {
                 push("FlatJS._idToType[" + d.classId + "] = " + d.name + ";");
+                pushLinebreak();
+            }
         }
-        while (k < lines.length)
-            nlines.push(lines[k++]);
-        source.lines = nlines;
+        while (k < tokens.length)
+            ntokens.push(tokens[k++]);
+        source.tokens = ntokens;
     }
-    var _l;
+    var _o;
+}
+var gensym_counter = 1000;
+function gensym() {
+    return "__l" + gensym_counter++;
+}
+function reFormLines(ts) {
+    return ts.map(function (x) { return x[1]; }).join("").split("\n").map(function (l) { return new SourceLine("", 0, l); });
 }
 function expandGlobalAccessorsAndMacros() {
     for (var _i = 0; _i < allSources.length; _i++) {
         var source = allSources[_i];
-        var lines = source.lines;
+        var lines = reFormLines(source.tokens);
         var nlines = [];
         for (var _a = 0; _a < lines.length; _a++) {
             var l = lines[_a];
@@ -2404,6 +2455,11 @@ function endstrip(x) {
     if (/^[a-zA-Z0-9]+$/.test(x))
         return x;
     return "(" + x + ")";
+}
+function standardErrHandler(file) {
+    return function (line, msg) {
+        throw new ProgramError(file, line, msg);
+    };
 }
 function printToks(ts) {
     var s = "";

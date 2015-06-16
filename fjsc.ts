@@ -395,20 +395,19 @@ class SSet {
     }
 }
 
-// A hack
+// Temporary hack
 class SourceLine {
     constructor(public file:string, public line:number, public text:string) {}
 }
 
 class Source {
-    // A hack for testing
-    lines: SourceLine[] = null;
+    lines: SourceLine[] = null;	// A hack
 
     constructor(public input_file:string, public output_file:string, public defs:UserDefn[], public tokens:[Token,string][]) {}
 
     allText(): string {
 	if (this.lines)
-	    return this.lines.map(function(x) { return x.text }).join("\n");
+	    return this.lines.map(function (x) { return x.text }).join("\n");
 	return this.tokens.map(function (x) { return x[1] }).join("");
     }
 }
@@ -517,17 +516,12 @@ class TokenScanner
 	    this.line++;
 	    break;
 	case Token.SetLine:
-	    this.line = this.extractLine(this.current[1]);
+	    this.line = extractLine(this.current[1]);
 	    break;
 	}
 	let result = this.current;
 	this.current = this.ts.next();
 	return result;
-    }
-
-    // Given a string of the form "/*n*/", return n as a number.
-    extractLine(tk:string):number {
-	return parseInt(tk.substring(2,tk.length-2));
     }
 
     // Shorthand for matching an Id with the given ID name.
@@ -572,6 +566,11 @@ class TokenScanner
 	    }
 	}
     }
+}
+
+// Given a string of the form "/*n*/", return n as a number.
+function extractLine(tk:string):number {
+    return parseInt(tk.substring(2,tk.length-2));
 }
 
 class ParenCounter
@@ -648,12 +647,6 @@ class TokenTransducer extends TokenScanner {
 
     release(mark:number) {
 	this.output.length = mark;
-    }
-}
-
-function standardErrHandler(file:string):(line:number,msg:string)=>void {
-    return function(line:number, msg:string):void {
-	throw new ProgramError(file, line, msg);
     }
 }
 
@@ -848,17 +841,31 @@ function parseSignature(file:string, line:number, mbody:[Token,string][]): strin
 // Parse one argument expression, ends at rightparen or comma@level0, EOI is an error.
 // Does not consume either of the terminators.  Any leading leftparen has been skipped.
 // An empty expression is an error.
-//
-// Used by the macro expander.
 
 function parseArgument(file:string, line:number, tokens:TokenScanner): [Token,string][] {
     return parseExpr(file, line, tokens, new TokenSet(Token.Comma, Token.RParen));
 }
 
-// As parseArgument but also end at linebreak at nesting level 0 and right brace
+// Parse one stand-alone expression.  This is necessarily approximate
+// since we don't do accurate ASI.  So stop at a linebreak when at
+// paren level 0; when a right paren would unbalance the expression.
+//
+// Another problem is whether to stop at comma or not.  If the
+// expression happens to be within an argument list, ie, f(x, y=z, w),
+// then we should, but if it isn't, and it is a comma expression, then
+// we shouldn't.  The former case is probably more common, so bias in
+// favor of it.
+//
+// An interesting issue here is if semicolon should stop parsing or be
+// an error even not at level 0.  EOI is an error if not at level 0.
+
+// TODO: Document that comma expressions are brittle on the rhs of
+// assignment, maybe other places.
 
 function parseExpression(file:string, line:number, tokens:TokenScanner): [Token,string][] {
-    return parseExpr(file, line, tokens, new TokenSet(Token.Comma, Token.RParen, Token.RBrace, Token.Linebreak, Token.Comment, Token.Semicolon, Token.EOI));
+    return parseExpr(file, line, tokens,
+		     new TokenSet(Token.Comma, Token.RParen, Token.RBrace, Token.RBracket,
+				  Token.Linebreak, Token.Comment, Token.Semicolon, Token.EOI));
 }
 
 function parseExpr(file:string, line:number, ts2:TokenScanner, stopset:TokenSet): [Token,string][] {
@@ -868,7 +875,9 @@ function parseExpr(file:string, line:number, ts2:TokenScanner, stopset:TokenSet)
 	let t = pc.advance();
 	if (t[0] == Token.EOI || pc.isUnbalanced)
 	    throw new ProgramError(file, ts2.line, "Unbalanced parentheses");
-	if (t[0] != Token.Spaces && t[0] != Token.Comment && t[0] != Token.Linebreak)
+	if (t[0] == Token.Spaces || t[0] == Token.Comment || t[0] == Token.Linebreak)
+	    expr.push([Token.Spaces, " "]);
+	else
 	    expr.push(t);
     }
     if (expr.length == 0)
@@ -1503,69 +1512,88 @@ function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number)
     return ts2.tokens;
 }
 
-// MEN AT WORK
-
-function reFormLines(ts:[Token,string][]): SourceLine[] {
-    return ts.map(function (x) { return x[1] }).join("").split("\n").map(function (l) { return new SourceLine("", 0, l) });
-}
-
-function reFormBody(ts:[Token,string][]): string[] {
-    return ts.map(function (x) { return x[1] }).join("").split("\n");
-}
-
-function linePusher(info:() => [string,number], nlines:SourceLine[]): (text:string) => void {
-    return function (text:string):void {
-	let [file,line] = info();
-	nlines.push(new SourceLine(file, line, text));
-    }
-}
-
-// NOW DO:
-// - this should operate on tokens and leave tokens in place
-// - reFormBody goes away completely
-// - the next stage, expandGlobalAccessorsAndMacros, can start out by applying reFormLines.
-// - we can just use "Other" tokens for inserted boilerplate, it won't be subject to macro expansion.
-
 function pasteupTypes():void {
-    let emitFn = "";		// ES5 workaround - would otherwise be local to inner "for" loop
-    let emitLine = 0;		// ditto
+
+    // ES5 hacks
+    function otherPusher(ntokens:[Token,string][]):(x:string)=>void {
+	return function (text:string):void {
+	    ntokens.push([Token.Other, text]);
+	}
+    }
+
+    function linebreakPusher(ntokens:[Token,string][]):() => void {
+	return function ():void {
+	    ntokens.push([Token.Linebreak, "\n"]);
+	}
+    }
+
+    function manyPusher(ntokens:[Token,string][]):(...xs:[Token,string][]) => void {
+	return function (...xs:[Token,string][]):void {
+	    for ( let x of xs )
+		ntokens.push(x);
+	}
+    }
+
     for ( let source of allSources ) {
 	let defs = source.defs;
-	let lines = reFormLines(source.tokens);
-	let nlines: SourceLine[] = [];
+	let tokens = source.tokens;
+	let ntokens: [Token,string][] = [];
 	let k = 0;
+	let lineno = 1;
+
+	let push = otherPusher(ntokens);
+	let pushLinebreak = linebreakPusher(ntokens);
+	let pushMany = manyPusher(ntokens);
+
 	for ( let d of defs ) {
-	    while (k < d.origin && k < lines.length)
-		nlines.push(lines[k++]);
+	    while (lineno < d.origin && k < tokens.length) {
+		let t:[Token,string];
+		ntokens.push((t = tokens[k++]));
+		switch (t[0]) {
+		case Token.Linebreak:
+		    lineno++;
+		    break;
+		case Token.SetLine:
+		    lineno = extractLine(t[1]);
+		    break;
+		}
+	    }
 
-	    let push = linePusher(function ():[string,number] { return [emitFn, emitLine++] }, nlines);
+	    ntokens.push([Token.SetFile, "/*" + d.file + "[class definition]*/"]);
+	    ntokens.push([Token.SetLine, "/*" + d.line + "*/"]);
+	    pushLinebreak();
 
-	    emitFn = d.file + "[class definition]";
-	    emitLine = d.line;
 	    if (d.kind == DefnKind.Class)
 		push("function " + d.name + "(p) { this._pointer = (p|0); }");
 	    else
 		push("function " + d.name + "() {}");
+	    pushLinebreak();
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
 		if (cls.baseName)
 		    push(d.name + ".prototype = new " + cls.baseName + ";");
 		else
 		    push("Object.defineProperty(" + d.name + ".prototype, 'pointer', { get: function () { return this._pointer } });");
+		pushLinebreak();
 	    }
 	    push(d.name + ".NAME = \"" + d.name + "\";");
+	    pushLinebreak();
 	    push(d.name + ".SIZE = " + d.size + ";");
+	    pushLinebreak();
 	    push(d.name + ".ALIGN = " + d.align + ";");
+	    pushLinebreak();
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
 		push(d.name + ".CLSID = " + cls.classId + ";");
+		pushLinebreak();
 		push("Object.defineProperty(" + d.name + ", 'BASE', {get: function () { return " + (cls.baseName ? cls.baseName : "null") + "; }});");
+		pushLinebreak();
 	    }
 
 	    // Now do methods.
 	    //
 	    // Implementation methods are emitted directly in the defining type, with a name suffix _impl.
-	    // For struct methods, the name is "_get_impl", "_set_impl", or "_copy_impl".
+	    // For struct methods, the name is "_get_impl" or "_set_impl"
 
 	    let haveSetter = false;
 	    let haveGetter = false;
@@ -1591,24 +1619,17 @@ function pasteupTypes():void {
 		    ;
 		else
 		    name += "_impl";
-		emitFn = d.file + "[method " + name + "]";
-		emitLine = m.line;
-		let body = reFormBody(m.body); // Hack
-		// Formatting: useful to strip all trailing blank lines from
-		// the body first.
-		//
-		// FIXME: Obviously with tokens we'd operate on blank/comment tokens.
-		let last = body.length-1;
-		while (last > 0 && /^\s*$/.test(body[last]))
-		    last--;
-		if (last == 0)
-		    push(d.name + "." + name + " = function " + body[0]);
-		else {
-		    push(d.name + "." + name + " = function " + body[0]);
-		    for ( let x=1; x < last ; x++ )
-			push(body[x]);
-		    push(body[last]);
-		}
+		pushMany([Token.SetFile, "/*" + d.file + "[method " + name + "]*/"],
+			 [Token.SetLine, "/*" + m.line + "*/"]);
+		pushLinebreak();
+		pushMany([Token.Id, d.name],
+			 [Token.Dot, "."],
+			 [Token.Id, name],
+			 [Token.Assign, "="],
+			 [Token.Id, "function"]);
+		for ( let token of m.body )
+		    ntokens.push(token);
+		pushLinebreak();
 	    }
 
 	    // Now default methods, if appropriate.
@@ -1616,23 +1637,83 @@ function pasteupTypes():void {
 	    if (d.kind == DefnKind.Struct) {
 		let struct = <StructDefn> d;
 		if (!haveGetter) {
-		    push(d.name + "._get_impl = function (SELF) {");
-		    push("  var v = new " + d.name + ";");
+		    let local = gensym();
+		    pushMany([Token.Id, d.name],
+			     [Token.Dot, "."],
+			     [Token.Id, "_get_impl"],
+			     [Token.Assign, "="],
+			     [Token.Id, "function"],
+			     [Token.LParen, "("],
+			     [Token.Id, "SELF"],
+			     [Token.RParen, ")"],
+			     [Token.LBrace, "{"]);
+		    pushLinebreak();
+		    pushMany([Token.Id, "var"],
+			     [Token.Spaces, " "],
+			     [Token.Id, local],
+			     [Token.Assign, "="],
+			     [Token.Id, "new"],
+			     [Token.Spaces, " "],
+			     [Token.Id, d.name],
+			     [Token.Semicolon, ";"]);
+		    pushLinebreak();
+
 		    // Use longhand for access, since self accessors are expanded before pasteup.
 		    // TODO: Would be useful to fix that.
-		    for ( let p of d.props )
-			push("  v." + p.name + " = " + d.name + "." + p.name + "(SELF);");
-		    push("  return v;");
-		    push("}");
+		    for ( let p of d.props ) {
+			pushMany([Token.Id, local],
+				 [Token.Dot, "."],
+				 [Token.Id, p.name],
+				 [Token.Assign, "="],
+				 [Token.Id, d.name],
+				 [Token.Dot, "."],
+				 [Token.Id, p.name],
+				 [Token.LParen, "("],
+				 [Token.Id, "SELF"],
+				 [Token.RParen, ")"],
+				 [Token.Semicolon, ";"]);
+			pushLinebreak();
+		    }
+		    pushMany([Token.Id, "return"], [Token.Spaces, " "], [Token.Id, local], [Token.Semicolon, ";"]);
+		    pushLinebreak();
+		    ntokens.push([Token.RBrace, "}"]);
+		    pushLinebreak();
 		    struct.hasGetMethod = true;
 		}
 
 		if (!haveSetter) {
-		    push(d.name + "._set_impl = function (SELF, v) {");
-		    // TODO: as above.
-		    for ( let p of d.props )
-			push("  " + d.name + "." + p.name + ".set(SELF, v." + p.name + ");");
-		    push("}");
+		    let local = gensym();
+		    pushMany([Token.Id, d.name],
+			     [Token.Dot, "."],
+			     [Token.Id, "_set_impl"],
+			     [Token.Assign, "="],
+			     [Token.Id, "function"],
+			     [Token.LParen, "("],
+			     [Token.Id, "SELF"],
+			     [Token.Comma, ","],
+			     [Token.Id, local],
+			     [Token.RParen, ")"],
+			     [Token.LBrace, "{"]);
+		    pushLinebreak();
+		    // TODO: as above, useful to be able to use shorthand?
+		    for ( let p of d.props ) {
+			pushMany([Token.Id, d.name],
+				 [Token.Dot, "."],
+				 [Token.Id, p.name],
+				 [Token.Dot, "."],
+				 [Token.Id, "set"],
+				 [Token.LParen, "("],
+				 [Token.Id, "SELF"],
+				 [Token.Comma, ","],
+				 [Token.Id, local],
+				 [Token.Dot, "."],
+				 [Token.Id, p.name],
+				 [Token.RParen, ")"],
+				 [Token.Semicolon, ";"]);
+			pushLinebreak();
+		    }
+		    ntokens.push([Token.RBrace, "}"]);
+		    pushLinebreak();
 		    struct.hasSetMethod = true;
 		}
 	    }
@@ -1643,23 +1724,33 @@ function pasteupTypes():void {
 		let cls = <ClassDefn> d;
 		for ( let virtual of cls.vtable ) {
 		    // Shouldn't matter much
-		    emitFn = d.file + "[vtable " + virtual.name + "]";
-		    emitLine = d.line;
+		    ntokens.push([Token.SetFile, "/*" + d.file + "[vtable " + virtual.name + "]*/"]);
+		    ntokens.push([Token.SetLine, "/*" + d.line + "*/"]);
+		    pushLinebreak();
 		    let signature = virtual.signature();
 		    push(d.name + "." + virtual.name + " = function (SELF " + signature + ") {");
+		    pushLinebreak();
 		    push("  switch (_mem_int32[SELF>>2]) {");
+		    pushLinebreak();
 		    let kv = virtual.reverseCases.keysValues();
 		    for ( let [name,cases]=kv.next() ; name ; [name,cases]=kv.next() ) {
-			for ( let c of cases )
+			for ( let c of cases ) {
 			    push(`    case ${c}:`);
+			    pushLinebreak();
+			}
 			push(`      return ${name}(SELF ${signature});`);
+			pushLinebreak();
 		    }
 		    push("    default:");
+		    pushLinebreak();
 		    push("      " + (virtual.default_ ?
 				     `return ${virtual.default_}(SELF ${signature})` :
 				     "throw FlatJS._badType(SELF)") + ";");
+		    pushLinebreak();
 		    push("  }");
+		    pushLinebreak();
 		    push("}");
+		    pushLinebreak();
 		}
 	    }
 
@@ -1668,20 +1759,40 @@ function pasteupTypes():void {
 	    if (d.kind == DefnKind.Class) {
 		let cls = <ClassDefn> d;
 		push(d.name + ".initInstance = function(SELF) { _mem_int32[SELF>>2]=" + cls.classId + "; return SELF; }");
+		pushLinebreak();
 	    }
 
-	    if (d.kind == DefnKind.Class)
+	    if (d.kind == DefnKind.Class) {
 		push("FlatJS._idToType[" + (<ClassDefn> d).classId + "] = " + d.name + ";");
+		pushLinebreak();
+	    }
+
+	    // TODO: This is not right.  Here we should pick up the
+	    // line number following the definition?  Depends on how
+	    // this information will be used later.
+
+	    //ntokens.push([Token.SetFile, "/*" + d.file + "*/"]);
+	    //ntokens.push([Token.SetLine, "/*" + d.line + "*/"]);
 	}
-	while (k < lines.length)
-	    nlines.push(lines[k++]);
-	source.lines = nlines;
+	while (k < tokens.length)
+	    ntokens.push(tokens[k++]);
+	source.tokens = ntokens;
     }
+}
+
+let gensym_counter = 1000;
+
+function gensym():string {
+    return "__l" + gensym_counter++;
+}
+
+function reFormLines(ts:[Token,string][]): SourceLine[] {
+    return ts.map(function (x) { return x[1] }).join("").split("\n").map(function (l) { return new SourceLine("", 0, l) });
 }
 
 function expandGlobalAccessorsAndMacros():void {
     for ( let source of allSources ) {
-	let lines = source.lines;
+	let lines = reFormLines(source.tokens);
 	let nlines: SourceLine[] = [];
 	for ( let l of lines )
 	    nlines.push(new SourceLine(l.file, l.line, expandMacrosIn(l.file, l.line, l.text)));
@@ -2046,6 +2157,12 @@ function endstrip(x:string):string {
     if (/^[a-zA-Z0-9]+$/.test(x))
 	return x;
     return "(" + x + ")";
+}
+
+function standardErrHandler(file:string):(line:number,msg:string)=>void {
+    return function(line:number, msg:string):void {
+	throw new ProgramError(file, line, msg);
+    }
 }
 
 function printToks(ts:[Token,string][]):void {

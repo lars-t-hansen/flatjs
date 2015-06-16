@@ -33,8 +33,9 @@ enum Token {
     Other,
     Spaces,    // Also block comment that does not cross a line break, and line comment
     Linebreak, // One line break
-    Comment,   // Block comment that crosses a line break, a SetLine will follow
+    Comment,   // Block comment that crosses a line break, a SetLine will normally follow
     SetLine,   // Set the line number.  Payload is a comment: /*n*/ where n is the new line number
+    SetFile,   // Set the file name.  Payload is a comment: /*name*/ where name is the new name
     FlatJS,
     New,
     EOI        // Always the last token
