@@ -1383,45 +1383,18 @@ function expandSelfAccessors() {
 }
 function doExpandSelfAccessors(t, tokens, line) {
     var ts2 = new TokenTransducer(new Retokenizer(tokens), standardErrHandler(t.file), line);
-    var hasDot = false;
+    var env = { SELF: t };
     for (;;) {
-        if (ts2.lookingAt(Token.EOI))
+        var _a = findQualifiedName(env, ts2), primaryName = _a[0], primaryType = _a[1], path = _a[2], mark = _a[3];
+        if (primaryType == null)
             break;
-        if (!ts2.lookingAt(Token.Id)) {
-            // Filter by name in general
-            hasDot = ts2.lookingAt(Token.Dot);
-            ts2.advance();
-            continue;
-        }
-        if (hasDot) {
-            // Skip if the name follows "."
-            ts2.advance();
-            hasDot = false;
-            continue;
-        }
-        if (ts2.current[1] != "SELF") {
-            // Filter by names that are in scope
-            ts2.advance();
-            continue;
-        }
-        var mark = ts2.mark();
-        ts2.advance();
-        var path = [];
-        while (ts2.lookingAt(Token.Dot)) {
-            ts2.advance();
-            path.push(ts2.matchId());
-        }
-        if (path.length == 0) {
-            // If the name is not part of a path then leave it alone
-            continue;
-        }
         var operator = path[path.length - 1];
         var needArguments = false;
         var requireArityCheck = false;
         var args = [];
         if (operator in OpAttr) {
             if (!OpAttr[operator].withSelf)
-                throw new ProgramError(t.file, ts2.line, "Operator cannot be used with SELF reference: " + operator);
+                throw new ProgramError(t.file, ts2.line, "Operator cannot be used with " + primaryName + " reference: " + operator);
             path.pop();
             if (path.length == 0)
                 throw new ProgramError(t.file, ts2.line, "Operator requires nonempty path: " + operator);
@@ -1434,7 +1407,7 @@ function doExpandSelfAccessors(t, tokens, line) {
                 requireArityCheck = true;
             }
             var pathname = path.join(".");
-            if (!t.findAccessibleFieldFor(operator, pathname))
+            if (!primaryType.findAccessibleFieldFor(operator, pathname))
                 throw new ProgramError(t.file, ts2.line, "Inappropriate operation for " + pathname);
         }
         else if (ts2.lookingAt(Token.Assign)) {
@@ -1442,7 +1415,7 @@ function doExpandSelfAccessors(t, tokens, line) {
             // that limitation is commented out currently.
             var tok = ts2.advance();
             var pathname = path.join(".");
-            if (!(tok[1] in AssignmentOps) || !t.findAccessibleFieldFor((operator = AssignmentOps[tok[1]]), pathname))
+            if (!(tok[1] in AssignmentOps) || !primaryType.findAccessibleFieldFor((operator = AssignmentOps[tok[1]]), pathname))
                 throw new ProgramError(t.file, ts2.line, "Inappropriate operation for " + pathname);
             args.push(parseExpression(t.file, ts2.line, ts2));
         }
@@ -1455,7 +1428,7 @@ function doExpandSelfAccessors(t, tokens, line) {
             // Get.  Leave operator blank.
             operator = "";
             var pathname = path.join(".");
-            if (!t.findAccessibleFieldFor("get", pathname))
+            if (!primaryType.findAccessibleFieldFor("get", pathname))
                 throw new ProgramError(t.file, ts2.line, "Inappropriate operation for " + pathname);
         }
         if (needArguments) {
@@ -1474,7 +1447,7 @@ function doExpandSelfAccessors(t, tokens, line) {
             }
         }
         ts2.release(mark);
-        ts2.inject([Token.Id, t.name]);
+        ts2.inject([Token.Id, primaryType.name]);
         for (var _i = 0; _i < path.length; _i++) {
             var name_1 = path[_i];
             ts2.inject([Token.Dot, "."]);
@@ -1485,19 +1458,58 @@ function doExpandSelfAccessors(t, tokens, line) {
             ts2.inject([Token.Id, operator]);
         }
         ts2.inject([Token.LParen, "("]);
-        ts2.inject([Token.Id, "SELF"]);
-        for (var _a = 0; _a < args.length; _a++) {
-            var arg = args[_a];
+        ts2.inject([Token.Id, primaryName]);
+        for (var _b = 0; _b < args.length; _b++) {
+            var arg = args[_b];
             ts2.inject([Token.Comma, ","]);
             // TODO: Not quite right line number, should keep the line number with argument expression
-            for (var _b = 0, _c = doExpandSelfAccessors(t, arg, ts2.line); _b < _c.length; _b++) {
-                var x = _c[_b];
+            for (var _c = 0, _d = doExpandSelfAccessors(t, arg, ts2.line); _c < _d.length; _c++) {
+                var x = _d[_c];
                 ts2.inject(x);
             }
         }
         ts2.inject([Token.RParen, ")"]);
     }
     return ts2.tokens;
+}
+// FIXME: "names" should have a better type
+function findQualifiedName(names, ts2) {
+    var hasDot = false;
+    for (;;) {
+        if (ts2.lookingAt(Token.EOI))
+            return ["", null, [], 0];
+        if (!ts2.lookingAt(Token.Id)) {
+            // Filter by name in general
+            hasDot = ts2.lookingAt(Token.Dot);
+            ts2.advance();
+            continue;
+        }
+        if (hasDot) {
+            // Skip if the name follows "."
+            ts2.advance();
+            hasDot = false;
+            continue;
+        }
+        if (!(ts2.current[1] in names)) {
+            // Filter by names that are in scope
+            ts2.advance();
+            continue;
+        }
+        var primaryName = ts2.current[1];
+        var primaryType = names[primaryName]; // FIXME: Safe by construction, but too restrictive
+        var mark = ts2.mark();
+        ts2.advance();
+        var path = [];
+        while (ts2.lookingAt(Token.Dot)) {
+            ts2.advance();
+            path.push(ts2.matchId());
+        }
+        if (path.length == 0) {
+            // If the name is not part of a path then leave it alone
+            continue;
+        }
+        return [primaryName, primaryType, path, mark];
+    }
 }
 function pasteupTypes() {
     // ES5 hacks

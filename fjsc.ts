@@ -1392,38 +1392,11 @@ function expandSelfAccessors():void {
 
 function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number):[Token,string][] {
     let ts2 = new TokenTransducer(new Retokenizer(tokens), standardErrHandler(t.file), line);
-    let hasDot = false;
+    let env = {SELF: t};
     for (;;) {
-	if (ts2.lookingAt(Token.EOI))
+	let [primaryName,primaryType,path,mark] = findQualifiedName(env, ts2)
+	if (primaryType == null)
 	    break;
-	if (!ts2.lookingAt(Token.Id)) {
-	    // Filter by name in general
-	    hasDot = ts2.lookingAt(Token.Dot);
-	    ts2.advance();
-	    continue;
-	}
-	if (hasDot) {
-	    // Skip if the name follows "."
-	    ts2.advance();
-	    hasDot = false;
-	    continue;
-	}
-	if (ts2.current[1] != "SELF") {
-	    // Filter by names that are in scope
-	    ts2.advance();
-	    continue;
-	}
-	let mark = ts2.mark();
-	ts2.advance();
-	let path:string[] = [];
-	while (ts2.lookingAt(Token.Dot)) {
-	    ts2.advance();
-	    path.push(ts2.matchId());
-	}
-	if (path.length == 0) {
-	    // If the name is not part of a path then leave it alone
-	    continue;
-	}
 
 	let operator = path[path.length-1];
 	let needArguments = false;
@@ -1432,7 +1405,7 @@ function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number)
 
 	if (operator in OpAttr) {
 	    if (!OpAttr[operator].withSelf)
-		throw new ProgramError(t.file, ts2.line, "Operator cannot be used with SELF reference: " + operator);
+		throw new ProgramError(t.file, ts2.line, "Operator cannot be used with " + primaryName + " reference: " + operator);
 	    path.pop();
 	    if (path.length == 0)
 		throw new ProgramError(t.file, ts2.line, "Operator requires nonempty path: " + operator);
@@ -1445,7 +1418,7 @@ function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number)
 		requireArityCheck = true;
 	    }
 	    var pathname = path.join(".");
-	    if (!t.findAccessibleFieldFor(operator, pathname))
+	    if (!primaryType.findAccessibleFieldFor(operator, pathname))
 		throw new ProgramError(t.file, ts2.line, "Inappropriate operation for " + pathname);
 	}
 	else if (ts2.lookingAt(Token.Assign)) {
@@ -1453,7 +1426,7 @@ function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number)
 	    // that limitation is commented out currently.
 	    let tok = ts2.advance();
 	    var pathname = path.join(".");
-	    if (!(tok[1] in AssignmentOps) || !t.findAccessibleFieldFor((operator = AssignmentOps[tok[1]]), pathname))
+	    if (!(tok[1] in AssignmentOps) || !primaryType.findAccessibleFieldFor((operator = AssignmentOps[tok[1]]), pathname))
 		throw new ProgramError(t.file, ts2.line, "Inappropriate operation for " + pathname);
 
 	    args.push(parseExpression(t.file, ts2.line, ts2));
@@ -1469,7 +1442,7 @@ function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number)
 	    // Get.  Leave operator blank.
 	    operator = "";
 	    var pathname = path.join(".");
-	    if (!t.findAccessibleFieldFor("get", pathname))
+	    if (!primaryType.findAccessibleFieldFor("get", pathname))
 		throw new ProgramError(t.file, ts2.line, "Inappropriate operation for " + pathname);
 	}
 
@@ -1490,7 +1463,7 @@ function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number)
 	}
 
 	ts2.release(mark);
-	ts2.inject([Token.Id, t.name]);
+	ts2.inject([Token.Id, primaryType.name]);
 	for ( let name of path ) {
 	    ts2.inject([Token.Dot, "."]);
 	    ts2.inject([Token.Id, name]);
@@ -1500,7 +1473,7 @@ function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number)
 	    ts2.inject([Token.Id, operator]);
 	}
 	ts2.inject([Token.LParen, "("]);
-	ts2.inject([Token.Id, "SELF"]);
+	ts2.inject([Token.Id, primaryName]);
 	for ( let arg of args ) {
 	    ts2.inject([Token.Comma, ","]);
 	    // TODO: Not quite right line number, should keep the line number with argument expression
@@ -1510,6 +1483,47 @@ function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number)
 	ts2.inject([Token.RParen, ")"]);
     }
     return ts2.tokens;
+}
+
+// FIXME: "names" should have a better type
+
+function findQualifiedName(names:any, ts2:TokenTransducer):[string, UserDefn, string[], number] {
+    let hasDot = false;
+    for (;;) {
+	if (ts2.lookingAt(Token.EOI))
+	    return ["", null, [], 0];
+	if (!ts2.lookingAt(Token.Id)) {
+	    // Filter by name in general
+	    hasDot = ts2.lookingAt(Token.Dot);
+	    ts2.advance();
+	    continue;
+	}
+	if (hasDot) {
+	    // Skip if the name follows "."
+	    ts2.advance();
+	    hasDot = false;
+	    continue;
+	}
+	if (!(ts2.current[1] in names)) {
+	    // Filter by names that are in scope
+	    ts2.advance();
+	    continue;
+	}
+	let primaryName = ts2.current[1];
+	let primaryType = <UserDefn> names[primaryName]; // FIXME: Safe by construction, but too restrictive
+	let mark = ts2.mark();
+	ts2.advance();
+	let path:string[] = [];
+	while (ts2.lookingAt(Token.Dot)) {
+	    ts2.advance();
+	    path.push(ts2.matchId());
+	}
+	if (path.length == 0) {
+	    // If the name is not part of a path then leave it alone
+	    continue;
+	}
+	return [primaryName, primaryType, path, mark];
+    }
 }
 
 function pasteupTypes():void {
