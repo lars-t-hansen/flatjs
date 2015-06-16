@@ -37,7 +37,7 @@ enum Token {
     SetLine,   // Set the line number.  Payload is a comment: /*n*/ where n is the new line number
     FlatJS,
     New,
-    EOI
+    EOI        // Always the last token
 };
 
 // Really an object with an optional "value" property and other

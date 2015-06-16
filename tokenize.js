@@ -34,7 +34,7 @@ var Token;
     Token[Token["SetLine"] = 18] = "SetLine";
     Token[Token["FlatJS"] = 19] = "FlatJS";
     Token[Token["New"] = 20] = "New";
-    Token[Token["EOI"] = 21] = "EOI";
+    Token[Token["EOI"] = 21] = "EOI"; // Always the last token
 })(Token || (Token = {}));
 ;
 var optrie = (function () {
