@@ -552,19 +552,21 @@ class TokenScanner
 
     // Skip across whitespace and comments, maintaining line number.
     skipSpace():void {
-	loop:
-	for (;;) {
-	    switch (this.current[0]) {
-	    case Token.Spaces:
-	    case Token.Comment:
-	    case Token.Linebreak:
-	    case Token.SetLine:
-		this.advance();
-		continue;
-	    default:
-		break loop;
-	    }
-	}
+	while (isAtmosphere(this.current[0]))
+	    this.advance();
+    }
+}
+
+function isAtmosphere(t:Token) {
+    switch (t) {
+    case Token.Spaces:
+    case Token.Comment:
+    case Token.Linebreak:
+    case Token.SetLine:
+    case Token.SetFile:
+	return true;
+    default:
+	return false;
     }
 }
 
@@ -647,6 +649,12 @@ class TokenTransducer extends TokenScanner {
 
     release(mark:number) {
 	this.output.length = mark;
+    }
+
+    justLookedAt(mark:number, t:Token): boolean {
+	while (mark >= 0 && isAtmosphere(output[mark][0]))
+	    mark--;
+	return mark >= 0 && output[mark][0] == t;
     }
 }
 
@@ -875,7 +883,7 @@ function parseExpr(file:string, line:number, ts2:TokenScanner, stopset:TokenSet)
 	let t = pc.advance();
 	if (t[0] == Token.EOI || pc.isUnbalanced)
 	    throw new ProgramError(file, ts2.line, "Unbalanced parentheses");
-	if (t[0] == Token.Spaces || t[0] == Token.Comment || t[0] == Token.Linebreak)
+	if (isAtmosphere(t[0]))
 	    expr.push([Token.Spaces, " "]);
 	else
 	    expr.push(t);
@@ -1392,12 +1400,16 @@ function expandSelfAccessors():void {
 
 function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number):[Token,string][] {
     let ts2 = new TokenTransducer(new Retokenizer(tokens), standardErrHandler(t.file), line);
-    let env = {SELF: t};
+    let env = new SMap<Defn>();
+    env.put("SELF", t);
     for (;;) {
-	let [primaryName,primaryType,path,mark] = findQualifiedName(env, ts2)
-	if (primaryType == null)
+	let [primaryName,primaryType_,path,mark] = findQualifiedName(env, ts2)
+	if (primaryType_ == null)
 	    break;
+	if (!(primaryType_ instanceof UserDefn))
+	    continue;
 
+	let primaryType = <UserDefn> primaryType_;
 	let operator = path[path.length-1];
 	let needArguments = false;
 	let requireArityCheck = false;
@@ -1485,9 +1497,7 @@ function doExpandSelfAccessors(t:UserDefn, tokens:[Token,string][], line:number)
     return ts2.tokens;
 }
 
-// FIXME: "names" should have a better type
-
-function findQualifiedName(names:any, ts2:TokenTransducer):[string, UserDefn, string[], number] {
+function findQualifiedName(names:SMap<Defn>, ts2:TokenTransducer):[string, Defn, string[], number] {
     let hasDot = false;
     for (;;) {
 	if (ts2.lookingAt(Token.EOI))
@@ -1510,7 +1520,7 @@ function findQualifiedName(names:any, ts2:TokenTransducer):[string, UserDefn, st
 	    continue;
 	}
 	let primaryName = ts2.current[1];
-	let primaryType = <UserDefn> names[primaryName]; // FIXME: Safe by construction, but too restrictive
+	let primaryType = names.get(primaryName);
 	let mark = ts2.mark();
 	ts2.advance();
 	let path:string[] = [];
@@ -1814,35 +1824,415 @@ function expandGlobalAccessorsAndMacros():void {
     }
 }
 
-const Ws = "\\s+";
-const Os = "\\s*";
-const Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed yet
-const Lbrace = Os + "\\{";
-const Rbrace = Os + "\\}";
-const LParen = Os + "\\(";
-const CommentOpt = Os + "(?:\\/\\/.*)?";
-const QualifierOpt = "(?:\\.(atomic|synchronic))?"
-const OpNames = "at|get|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
-const Operation = "(?:\\.(" + OpNames + "))";
-const OperationOpt = Operation + "?";
-const OperationLParen = "(?:\\.(" + OpNames + ")" + LParen + ")";
-const NullaryOperation = "(?:\\.(ref|notify))";
-const Path = "((?:\\." + Id + ")+)";
-const PathLazy = "((?:\\." + Id + ")+?)";
-const PathOpt = "((?:\\." + Id + ")*)";
-const PathOptLazy = "((?:\\." + Id + ")*?)";
-const AssignOp = "(=|\\+=|-=|&=|\\|=|\\^=)(?!=)";
+function expandGlobalAccessorsAndMacros():void {
+    for ( let source of allSources )
+	source.tokens = expandGlobalAccessorsAndMacrosFor(source.file, 1, source.tokens);
+}
+
+function decipherType(file:string, primaryName:string, path:string[]) : [PrimKind, boolean, string[]] {
+    let qualifier = PrimKind.None;
+    let isArray = false;
+    let k = 0;
+    if (k < path.length && (path[k] == "synchronic" || path[k] == "atomic")) {
+	if (!knownTypes.test(path[k] + "/" + primaryName))
+	    throw new ProgramError(file, line, "Invalid type name: " + path.join("."));
+	switch (path[k++]) {
+	case "synchronic": qualifier = PrimKind.Synchronic; break;
+	case "atomic": qualifier = PrimKind.Atomic; break;
+	}
+    }
+    if (k < path.length && path[k] == "Array") {
+	isArray = true;
+	k++;
+    }
+    return [qualifier, isArray, path.slice(k)];
+}
+
+// MEN AT WORK
+
+// General outline:
+//  For property and array access:
+//  - scan entire file for a path that starts with a known type name
+//  - for array access, the typename will be more elaborate, "PrimType(.atomic|.synchronic).Array
+//  - path requires operands (even "get" needs one)
+//  - path must be appropriate for operation
+//  - path must be appropriate for type
+// For @new, it is "@new" followwed by a type name (as for property and array access), but no path is allowed
+// We can use lookbehind to discover @new, I guess.
+// Operands need recursive expansion, again.
+
+function expandGlobalAccessorsAndMacrosFor(file:string, line:number, tokens:[Token,string][]): [Token,string][] {
+    let ts2 = new TokenTransducer(new Retokenizer(tokens), standardErrHandler(file), line);
+    for (;;) {
+	let [primaryName,primaryType,path,mark] = findQualifiedName(knownTypes, ts2)
+	if (primaryType == null)
+	    break;
+
+	let [qualifier, isArray, residualPath] = decipherType(file, primaryName, path);
+	let isNew = false;
+	let needArguments = true;
+	let requireArityCheck = false;
+	let requiredArity = 0;
+
+	if (ts2.justLookedAt(mark, Token.New)) {
+	    isNew = true;
+	    if (residualPath.length > 0)
+		throw new ProgramError(file, ts2.line, "Invalid type name for @new: " + primaryName + "." + path.join("."));
+	    if (isArray) {
+		requireArityCheck = true;
+		requiredArity = 1;
+	    }
+	    else {
+		if (ts2.lookingAt(Token.LParen))
+		    throw new ProgramError(file, ts2.line, "@new operator does not take arguments");
+		needArguments = false;
+	    }
+	}
+	else {
+	    // FIXME: requirements on residualPath
+
+	    if (!ts2.lookingAt(Token.LParen))
+		throw new ProgramError(t.file, ts2.line, "Operator requires arguments: " + operator);
+	    let operator = residualPath[residualPath.length-1];
+	    let args:[Token,string][][] = [];
+
+	    if (operator in OpAttr) {
+		residualPath.pop();
+		// Watch it, what about array access?
+		if (residualPath.length == 0)
+		    throw new ProgramError(t.file, ts2.line, "Operator requires nonempty path: " + operator);
+		requireArityCheck = true;
+		requiredArity = OpAttr[operator].arity;
+		var pathname = residualPath.join(".");
+		if (!primaryType.findAccessibleFieldFor(operator, pathname))
+		    throw new ProgramError(t.file, ts2.line, "Inappropriate operation for " + pathname);
+	    }
+	    else {
+		// Invocation or get.  Leave operator blank.
+		operator = "";
+		// TODO: Path must denote a method, right now that should just be an immediate check on the type
+		// TODO: If we know the method's arity we can record it here and check it below
+
+		// FIXME: more code for "get"
+	    }
+	}
+
+	// Arguments
+
+	ts2.match(Token.LParen);
+	if (!ts2.lookingAt(Token.RParen)) {
+	    args.push(parseArgument(t.file, ts2.line, ts2));
+	    while (ts2.lookingAt(Token.Comma)) {
+		ts2.advance();
+		args.push(parseArgument(t.file, ts2.line, ts2));
+	    }
+	}
+	ts2.match(Token.RParen);
+	// FIXME, wrong-ish
+	if (needArguments && requireArityCheck) {
+	    if (args.length != requiredArity)
+		throw new ProgramError(t.file, ts2.line, "Wrong number of arguments for operator: " + operator);
+	}
+
+	// TODO here: expand macros in arguments.  Can just call self
+	// recursively and then use the resulting token strings?
+
+	ts2.release(mark);
+	if (isNew && isArray)
+	    expandNewArray(ts2, primaryType, qualifier, args[0]);
+	else if (isNew)
+	    expandNew(ts2, primaryName, primaryType);
+	else if (isArray)
+	    expandArrayRef(...);
+	else
+	    expandPropRef(...);
+    }
+    return ts2.tokens;
+}
+
+function expandNewArray(ts2:TokenTransducer, primaryType:Defn, qualifier:PrimKind, expr:[Token,string][]):void {
+    // Issue #27 - implement this.
+    if (qualifier != PrimKind.None)
+	throw new InternalError("Qualifiers on array @new not yet implemented");
+
+    // Issue #16: Parentheses around the outer call
+    ts2.inject([Token.Other,
+		"FlatJS.allocOrThrow(" + primaryType.elementSize + " * (" + tokensToString(expr) + "), " + primaryType.elementAlign + ")"]);
+}
+
+function expandNew(ts2:TokenTransducer, primaryName:string, primaryType:Defn):void {
+    // Issue #16: Parentheses around the outer call (which could be either one)
+    let expr = "FlatJS.allocOrThrow(" + primaryType.size + "," + primaryType.align + ")";
+    if (primaryType.kind == DefnKind.Class)
+	expr = primaryName + ".initInstance(" + expr + ")";
+    ts2.inject([Token.Other, expr]);
+}
+
+function expandPropRef(primaryName:string, primaryType:Defn, path:string[], operation:string) {
+
+// Here, arity includes the self argument
+
+//function accMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
+    // let m = ms[0];
+    // let className = ms[1];
+    // let propName = "";
+    // let operation = "";
+
+    // let nomatch:[string,number] = [s, p+m.length];
+    // let left = s.substring(0,p);
+
+    // if (!ms[2] && !ms[3])
+    // 	return nomatch;		// We're looking at something else
+
+    // propName = ms[2] ? ms[2].substring(1) : ""; // Strip the leading "."
+    // operation = ms[3] ? ms[3] : "get";
+
+    // let ty = knownTypes.get(className);
+    // if (!ty)
+    // 	return nomatch;
+
+    let offset = 0;
+    let targetType: Defn = null;
+
+    if (propName == "") {
+	if (!(ty.kind == DefnKind.Primitive || ty.kind == DefnKind.Struct))
+	    throw new ProgramError(file, line, "Operation '" + operation + "' without a path requires a value type: " + s);
+	offset = 0;
+	targetType = ty;
+    }
+    else {
+	if (!(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct)) {
+	    //throw new ProgramError(file, line, "Operation with a path requires a structured type: " + s);
+	    return nomatch;
+	}
+
+	let cls = <UserDefn> ty;
+	// findAccessibleFieldFor will vet the operation against the field type,
+	// so atomic/synchronic ops will only be allowed on appropriate types
+
+	let fld = cls.findAccessibleFieldFor(operation, propName);
+	if (!fld) {
+	    let fld2 = cls.findAccessibleFieldFor("get", propName);
+	    if (fld2)
+		warning(file, line, "No match for " + className + "  " + operation + "  " + propName);
+	    return nomatch;
+	}
+	offset = fld.offset;
+	targetType = fld.type;
+    }
+
+    // Issue #16: Watch it: Parens interact with semicolon insertion.
+    let ref = `(${expandMacrosIn(file, line, endstrip(as[0]))} + ${offset})`;
+    if (operation == "ref") {
+	return [left + ref + s.substring(pp.where),
+		left.length + ref.length];
+    }
+
+    return loadFromRef(file, line, ref, targetType, s, left, operation, pp, as[1], as[2], nomatch);
+}
+
+function loadFromRef(file:string, line:number,
+		     ref:string, type:Defn, s:string, left:string, operation:string, pp:ParamParser,
+		     rhs:string, rhs2:string, nomatch:[string,number]):[string,number]
+{
+    let mem="", size=0, synchronic=false, atomic=false, simd=false, shift=-1, simdType="";
+    if (type.kind == DefnKind.Primitive) {
+	let prim = <PrimitiveDefn> type;
+	mem = prim.memory;
+	synchronic = prim.primKind == PrimKind.Synchronic;
+	atomic = prim.primKind == PrimKind.Atomic;
+	simd = prim.primKind == PrimKind.SIMD;
+	if (synchronic)
+	    shift = log2((<SynchronicDefn> prim).baseSize);
+	else if (simd)
+	    shift = log2((<SIMDDefn> prim).baseSize);
+	else
+	    shift = log2(prim.size);
+	if (simd)
+	    simdType = prim.name;
+    }
+    else if (type.kind == DefnKind.Class) {
+	mem = Defn.pointerMemName;
+	shift = log2(Defn.pointerSize);
+    }
+    if (shift >= 0) {
+	let expr = "";
+	let op = "";
+	switch (OpAttr[operation].arity) {
+	case 1:
+	    break;
+	case 2:
+	    rhs = expandMacrosIn(file, line, endstrip(rhs));
+	    break;
+	case 3:
+	    rhs = expandMacrosIn(file, line, endstrip(rhs));
+	    rhs2 = expandMacrosIn(file, line, endstrip(rhs2));
+	    break;
+	default:
+	    throw new InternalError("No operator: " + operation + " " + s);
+	}
+	let fieldIndex = "";
+	if (synchronic)
+	    fieldIndex = `(${ref} + ${SynchronicDefn.bias}) >> ${shift}`;
+	else
+	    fieldIndex = `${ref} >> ${shift}`;
+	switch (operation) {
+	case "get":
+	    if (atomic || synchronic)
+		expr = `Atomics.load(${mem}, ${fieldIndex})`;
+	    else if (simd)
+		expr = `SIMD.${simdType}.load(${mem}, ${fieldIndex})`;
+	    else
+		expr = `${mem}[${fieldIndex}]`;
+	    break;
+	case "notify":
+	    expr = `FlatJS.${OpAttr[operation].synchronic}(${ref})`;
+	    break;
+	case "set":
+	case "add":
+	case "sub":
+	case "and":
+	case "or":
+	case "xor":
+	case "loadWhenEqual":
+	case "loadWhenNotEqual":
+	    if (atomic)
+		expr = `Atomics.${OpAttr[operation].atomic}(${mem}, ${fieldIndex}, ${rhs})`;
+	    else if (synchronic)
+		expr = `FlatJS.${OpAttr[operation].synchronic}(${ref}, ${mem}, ${fieldIndex}, ${rhs})`;
+	    else if (simd)
+		expr = `SIMD.${simdType}.store(${mem}, ${fieldIndex}, ${rhs})`;
+	    else
+		expr = `${mem}[${ref} >> ${shift}] ${OpAttr[operation].vanilla} ${rhs}`;
+	    break;
+	case "compareExchange":
+	case "expectUpdate":
+	    if (atomic)
+		expr = `Atomics.${OpAttr[operation].atomic}(${mem}, ${fieldIndex}, ${rhs}, ${rhs2})`;
+	    else
+		expr = `FlatJS.${OpAttr[operation].synchronic}(${ref}, ${mem}, ${fieldIndex}, ${rhs}, ${rhs2})`;
+	    break;
+	default:
+	    throw new InternalError("No operator: " + operation + " line: " + s);
+	}
+	// Issue #16: Parens interact with semicolon insertion.
+	//expr = `(${expr})`;
+	return [left + expr + s.substring(pp.where), left.length + expr.length];
+    }
+    else {
+	let t = <StructDefn> type;
+	let expr = "";
+	// Field type is a structure.  If the structure type has a getter then getting is allowed
+	// and should be rewritten as a call to the getter, passing the field reference.
+	// Ditto setter, which will also pass secondArg.
+	switch (operation) {
+	case "get":
+	    if (t.hasGetMethod)
+		expr = `${t.name}._get_impl(${ref})`;
+	    break;
+	case "set":
+	    if (t.hasSetMethod)
+		expr = `${t.name}._set_impl(${ref}, ${expandMacrosIn(file, line, endstrip(rhs))})`;
+	    break;
+	case "ref":
+	    expr = ref;
+	    break;
+	}
+	if (expr == "") {
+	    warning(file, line, "No operation " + operation + " allowed");
+	    return nomatch;
+	}
+	// Issue #16: Parens interact with semicolon insertion.
+	//expr = `(${expr})`;
+	return [left + expr + s.substring(pp.where), left.length + expr.length];
+    }
+}
+
+////// OLD CODE BELOW
+
+function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
+    let m=ms[0];
+    let typeName=ms[1];
+    let qualifier=ms[2];
+    let field=ms[3] ? ms[3].substring(1) : "";
+    let operation=ms[4];
+    let nomatch:[string,number] = [s,p+m.length];
+
+    if (operation == "get" || operation == "set")
+	throw new ProgramError(file, line, "Use 'at' and 'setAt' on Arrays");
+    if (operation == "at")
+	operation = "get";
+    if (operation == "setAt")
+	operation = "set";
+
+    let type = findType(typeName);
+    if (!type)
+	return nomatch;
+
+    let pp = new ParamParser(file, line, s, p+m.length);
+    let as = (pp).allArgs();
+
+    if (as.length != OpAttr[operation].arity+1) {
+	warning(file, line, `Wrong arity for accessor ${operation} / ${as.length}`);
+	return nomatch;
+    };
+
+    let multiplier = type.elementSize;
+    if (type.kind == DefnKind.Primitive) {
+	if (field)
+	    return nomatch;
+    }
+    else if (type.kind == DefnKind.Class) {
+	if (field)
+	    return nomatch;
+    }
+    let ref = "(" + expandMacrosIn(file, line, endstrip(as[0])) + "+" + multiplier + "*" + expandMacrosIn(file, line, endstrip(as[1])) + ")";
+    if (field) {
+	let fld = (<StructDefn> type).findAccessibleFieldFor(operation, field);
+	if (!fld)
+	    return nomatch;
+	// Issue #16: Watch it: Parens interact with semicolon insertion.
+	ref = "(" + ref + "+" + fld.offset + ")";
+	type = fld.type;
+    }
+    if (operation == "ref") {
+	let left = s.substring(0,p);
+	return [left + ref + s.substring(pp.where),
+		left.length + ref.length];
+    }
+
+    return loadFromRef(file, line, ref, type, s, s.substring(0,p), operation, pp, as[2], as[3], nomatch);
+}
+
+// const Ws = "\\s+";
+// const Os = "\\s*";
+// const Id = "[A-Za-z][A-Za-z0-9]*"; // Note, no underscores are allowed yet
+// const Lbrace = Os + "\\{";
+// const Rbrace = Os + "\\}";
+// const LParen = Os + "\\(";
+// const CommentOpt = Os + "(?:\\/\\/.*)?";
+// const QualifierOpt = "(?:\\.(atomic|synchronic))?"
+// const OpNames = "at|get|setAt|set|ref|add|sub|and|or|xor|compareExchange|loadWhenEqual|loadWhenNotEqual|expectUpdate|notify";
+// const Operation = "(?:\\.(" + OpNames + "))";
+// const OperationOpt = Operation + "?";
+// const OperationLParen = "(?:\\.(" + OpNames + ")" + LParen + ")";
+// const NullaryOperation = "(?:\\.(ref|notify))";
+// const Path = "((?:\\." + Id + ")+)";
+// const PathLazy = "((?:\\." + Id + ")+?)";
+// const PathOpt = "((?:\\." + Id + ")*)";
+// const PathOptLazy = "((?:\\." + Id + ")*?)";
+// const AssignOp = "(=|\\+=|-=|&=|\\|=|\\^=)(?!=)";
 
 // TODO: it's likely that the expandMacrosIn is really better
 // represented as a class, with a ton of methods and locals (eg for
 // file and line), performing expansion on one line.
 
-const new_re = new RegExp("@new\\s+(" + Id + ")" + QualifierOpt + "(?:\\.(Array)" + LParen + ")?", "g");
+// const new_re = new RegExp("@new\\s+(" + Id + ")" + QualifierOpt + "(?:\\.(Array)" + LParen + ")?", "g");
 
-const acc_re = new RegExp("(" + Id + ")" + PathOptLazy + "(?:" + Operation + "|)" + LParen, "g");
+// const acc_re = new RegExp("(" + Id + ")" + PathOptLazy + "(?:" + Operation + "|)" + LParen, "g");
 
-// It would sure be nice to avoid the explicit ".Array" here, but I don't yet know how.
-const arr_re = new RegExp("(" + Id + ")" + QualifierOpt + "\\.Array" + PathOpt + Operation + LParen, "g");
+// // It would sure be nice to avoid the explicit ".Array" here, but I don't yet know how.
+// const arr_re = new RegExp("(" + Id + ")" + QualifierOpt + "\\.Array" + PathOpt + Operation + LParen, "g");
 
 // Field accessors:
 //
@@ -2121,45 +2511,45 @@ function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArr
     return loadFromRef(file, line, ref, type, s, s.substring(0,p), operation, pp, as[2], as[3], nomatch);
 }
 
-// Since @new is new syntax, we throw errors for all misuse.
+// // Since @new is new syntax, we throw errors for all misuse.
 
-function newMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
-    let m=ms[0];
-    let baseType=ms[1];
-    let qualifier=ms[2];
-    let isArray=ms[3] == "Array";
-    let left = s.substring(0,p);
+// function newMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
+//     let m=ms[0];
+//     let baseType=ms[1];
+//     let qualifier=ms[2];
+//     let isArray=ms[3] == "Array";
+//     let left = s.substring(0,p);
 
-    // Issue #27 - implement this.
-    if (qualifier)
-	throw new InternalError("Qualifiers on array @new not yet implemented");
+//     // Issue #27 - implement this.
+//     if (qualifier)
+// 	throw new InternalError("Qualifiers on array @new not yet implemented");
 
-    let t = knownTypes.get(baseType);
-    if (!t)
-	throw new ProgramError(file, line, "Unknown type argument to @new: " + baseType);
+//     let t = knownTypes.get(baseType);
+//     if (!t)
+// 	throw new ProgramError(file, line, "Unknown type argument to @new: " + baseType);
 
-    if (!isArray) {
-	let expr = "FlatJS.allocOrThrow(" + t.size + "," + t.align + ")";
-	if (t.kind == DefnKind.Class) {
-	    // NOTE, parens removed here
-	    // Issue #16: Watch it: Parens interact with semicolon insertion.
-	    expr = baseType + ".initInstance(" + expr + ")";
-	}
-	return [left + expr + s.substring(p + m.length),
-		left.length + expr.length ];
-    }
+//     if (!isArray) {
+// 	let expr = "FlatJS.allocOrThrow(" + t.size + "," + t.align + ")";
+// 	if (t.kind == DefnKind.Class) {
+// 	    // NOTE, parens removed here
+// 	    // Issue #16: Watch it: Parens interact with semicolon insertion.
+// 	    expr = baseType + ".initInstance(" + expr + ")";
+// 	}
+// 	return [left + expr + s.substring(p + m.length),
+// 		left.length + expr.length ];
+//     }
 
-    let pp = new ParamParser(file, line, s, p+m.length);
-    let as = pp.allArgs();
-    if (as.length != 1)
-	throw new ProgramError(file, line, "Wrong number of arguments to @new " + baseType + ".Array");
+//     let pp = new ParamParser(file, line, s, p+m.length);
+//     let as = pp.allArgs();
+//     if (as.length != 1)
+// 	throw new ProgramError(file, line, "Wrong number of arguments to @new " + baseType + ".Array");
 
-    // NOTE, parens removed here
-    // Issue #16: Watch it: Parens interact with semicolon insertion.
-    let expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(file, line, endstrip(as[0])) + ", " + t.elementAlign + ")";
-    return [left + expr + s.substring(pp.where),
-	    left.length + expr.length];
-}
+//     // NOTE, parens removed here
+//     // Issue #16: Watch it: Parens interact with semicolon insertion.
+//     let expr = "FlatJS.allocOrThrow(" + t.elementSize + " * " + expandMacrosIn(file, line, endstrip(as[0])) + ", " + t.elementAlign + ")";
+//     return [left + expr + s.substring(pp.where),
+// 	    left.length + expr.length];
+// }
 
 // This can also check if x is already properly parenthesized, though that
 // involves counting parens, at least trivially (and then does it matter?).
