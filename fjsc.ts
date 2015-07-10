@@ -1366,7 +1366,7 @@ function findType(name:string):Defn {
 // Arity for SELF expansion is one less than this
 
 const OpAttr = {
-    "get":              { withSelf: true,  selfArg: false, arity: 1, atomic: "load",            synchronic: "" }, // FIXME, holdover from old expander
+    "get":              { withSelf: true,  selfArg: false, arity: 1, atomic: "load",            synchronic: "" },
     "ref":              { withSelf: true,  selfArg: false, arity: 1, atomic: "",                synchronic: "" },
     "notify":           { withSelf: true,  selfArg: false, arity: 1, atomic: "",                synchronic: "_synchronicNotify" },
     "set":              { withSelf: true,  selfArg: true,  arity: 2, atomic: "store",           synchronic: "_synchronicStore", vanilla: "=" },
@@ -1968,7 +1968,7 @@ function expandNew(ts2:TokenTransducer, primaryName:string, primaryType:Defn):vo
     ts2.inject([Token.Other, expr]);
 }
 
-function expandPropRef(primaryName:string, primaryType:Defn, path:string[], operation:string) {
+function expandPropRef(primaryName:string, primaryType:Defn, path:string[], operation:string, args:[Token,string][][]) {
 
 // Here, arity includes the self argument
 
@@ -1994,27 +1994,29 @@ function expandPropRef(primaryName:string, primaryType:Defn, path:string[], oper
     let offset = 0;
     let targetType: Defn = null;
 
-    if (propName == "") {
-	if (!(ty.kind == DefnKind.Primitive || ty.kind == DefnKind.Struct))
-	    throw new ProgramError(file, line, "Operation '" + operation + "' without a path requires a value type: " + s);
+    if (path.length == 0) {
+	// Ty.op(p, ...), eg int32.get(p) and Record.get(p), to reify a naked value type from its reference
+	if (!(primaryType.kind == DefnKind.Primitive || primaryType.kind == DefnKind.Struct))
+	    throw new ProgramError(file, line, "Operation '" + operation + "' without a path requires a value type");
 	offset = 0;
-	targetType = ty;
+	targetType = primaryType;
     }
     else {
-	if (!(ty.kind == DefnKind.Class || ty.kind == DefnKind.Struct)) {
-	    //throw new ProgramError(file, line, "Operation with a path requires a structured type: " + s);
-	    return nomatch;
-	}
+	if (!(primaryType.kind == DefnKind.Class || primaryType.kind == DefnKind.Struct))
+	    throw new ProgramError(file, line, "Operation with a path requires a structured type");
 
-	let cls = <UserDefn> ty;
+	let cls = <UserDefn> primaryType;
+
 	// findAccessibleFieldFor will vet the operation against the field type,
 	// so atomic/synchronic ops will only be allowed on appropriate types
 
+	let propName = path.join(".");
+	// This is way hacky, we should know what our operation is before now
 	let fld = cls.findAccessibleFieldFor(operation, propName);
 	if (!fld) {
 	    let fld2 = cls.findAccessibleFieldFor("get", propName);
 	    if (fld2)
-		warning(file, line, "No match for " + className + "  " + operation + "  " + propName);
+		warning(file, line, "No match for " + primaryName + "  " + operation + "  " + propName);
 	    return nomatch;
 	}
 	offset = fld.offset;
