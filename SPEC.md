@@ -17,8 +17,9 @@ FlatJS is a static language and is implemented as a preprocessor that
 translates JavaScript+FlatJS into plain JavaScript.
 
 A slightly more dynamic layer sits on top of the static layer,
-allowing objects in flat memory to be exposed as JavaScript classes
-within a single JavaScript context.
+allowing objects in flat memory to be exposed as true JavaScript
+objects within a single JavaScript execution context.  The types of
+these objects reflect their types in the static system.
 
 
 ## Caveats
@@ -34,7 +35,7 @@ Some things to watch out for:
   with automatic semicolon insertion (yay JavaScript).  When in doubt,
   use semicolons.
 
-Failures to obey these rules will sometimes lead to mysterious parsing
+Failure to obey these rules will sometimes lead to mysterious parsing
 and runtime errors.  A look at the generated code is usually enough to
 figure out what's going on; problems tend to be local.
 
@@ -52,12 +53,13 @@ There is a program-wide namespace for FlatJS types.  This namespace contains
 the predefined primitive types and every user-defined (struct or class) type.
 Type names in a program must be unique in this namespace.
 
-Every type that is referenced from an annotation or as a base type must be
-defined in the set of files processed together.  Types can be defined in any
-order and in any file of the program.
+Every FlatJS type that is referenced anywhere must be defined in the
+set of files processed together.  Types can be defined in any order
+and in any file of the program.
 
-Within the bodies of methods, 'this' has an undetermined binding (for now)
-and should not be referenced.
+Within the bodies of FlatJS methods, 'this' has an undetermined
+binding (for now) and should not be referenced.  (FIXME: reconcile
+with contrary prose below.)
 
 
 ## Primitive types
@@ -115,7 +117,7 @@ A field of struct type gives rise to a named substructure within the
 outer structure that contains the fields of the nested struct.  No struct
 may in this way include itself.
 
-No field may be named with the name of an operator: set, at, setAt,
+No field may be named with the name of an operator: get, set, at, setAt,
 ref, add, sub, and, or, xor, compareExchange, loadWhenEqual,
 loadWhenNotEqual, expectUpdate, or notify.
 
@@ -127,13 +129,14 @@ The first parameter of a method is always the keyword SELF.
 ### Dynamic semantics
 
 Within the body of a method, "this" denotes the type object carrying
-the method.
+the method.  (FIXME: is that true?  Esp for structs?)
+
 
 ### Translation
 
 For a struct type named R, with field names F1 .. Fn, the following
 will be defined, where "self" denotes a memory offset properly aligned
-for R and with a value such that memory offset self+R.size-1 is within
+for R and with a value such that memory offset self+R.SIZE-1 is within
 the memory.
 
 
@@ -156,26 +159,26 @@ R.NAME is the name of the type R.
 
 Whole-type accessors:
 
-* R.get(self) => reified value of the structure, 
+* R.get(self) => reified value of the structure
 * R.set(self, v) => set the value of the structure from a reified value
 
 Field accessors for all field types:
 
 * R.Fk(self) => Shorthand for R.fk.get(self)
 * R.Fk.get(self) => value of self.Fk field
-  If the field is a structure then the getter reifies the structure as a JavaScript object.
-  If the field type T does not have a ```get``` method then the getter returns a new instance
+  If the field Fk is a structure then the getter reifies the structure as a JavaScript object.
+  If the field Fk's type T does not have a ```get``` method then the getter returns a new instance
   of the JavaScript type R, with properties whose values are the values
   extracted from the flat object, with standard getters.  If T does have
-  a ```get``` method then R.Fk(self) invokes that method on SELF.Fk.ref and returns its
+  a ```get``` method then R.Fk(self) invokes that method on R.Fk.ref(self) and returns its
   result.
 * R.Fk.set(self, v) => void; set value of self.Fk field to v.
-  If the field is a structure then the setter is a function that updates the shared object from ```v```.
-  If the field type T does not have a ```set``` method then this method will set each field
+  If the field Fk is a structure then the setter is a function that updates the shared object from ```v```.
+  If the field Fk's type T does not have a ```set``` method then this method will set each field
   of self.Fk in order from same-named properties extracted from ```value```.
   If T does have a ```set``` method then this method will invoke that method
-  on SELF.Fk.ref and ```value```.
-* R.Fk.ref(self, v) => reference to the self.Fk field
+  on R.Fk.ref(self) and ```value```.
+* R.Fk.ref(self) => reference to (ie address of) the self.Fk field
 
 If a field Fk is designated "atomic" then the getter and setter just
 shown use atomic loads and stores.  In addition, the following atomic
@@ -240,7 +243,7 @@ matches any other field or method within the class definition
 or within the definition of any base class.
 
 No method within a class definition must have a name that matches any
-method within the class definition.  However, a method in a class may
+other method within the class definition.  However, a method in a class may
 match the name of a method in the base class if they are either both
 designated virtual or if neither is designated virtual.
 
@@ -251,15 +254,13 @@ may be better, but I'm not sure yet.)
 A virtual method whose name matches the name of a method in a base
 class is said to override the base class method.  Overriding methods
 must have the same signature (number and types of arguments) as the
-overridden method.
+overridden method.  (FIXME: types?  really?)
 
-The first parameter of a method is always the keyword SELF.
+A field of struct type gives rise to a named substructure within the
+outer class that contains the fields of the nested struct.
+Restrictions on field names are as for struct.
 
-As for structs, a field of struct type gives rise to a named
-substructure within the outer class that contains the fields of the
-nested struct.  Restrictions on field names are as for struct.
-
-A field of class type gives rise to a pointer field.
+A field of class type or array type gives rise to a pointer field.
 
 The layout of a class is compatible with the layout of its base class:
 any accessor on a field of a base class, and any invoker of a method
@@ -276,7 +277,7 @@ on behalf of the program.
 
 Within the body of a method, "this" denotes the type object carrying
 the method.  (Thus the calls ```SELF.method(...)``` and
-```this.method(SELF,...)``` are equivalent.)
+```this.method(SELF,...)``` are equivalent.)   (FIXME: premature?)
 
 
 ### Translation
@@ -309,7 +310,7 @@ C.prototype is an instance of the function object designating the base
 type, if there is a base type, otherwise an Object.
 
 NOTE, C.get() and C.set() are not defined, those are defined only on
-value types.
+value types.  (FIXME: what is this clause doing in this section?)
 
 
 #### Global function properties
@@ -353,7 +354,7 @@ memory for n*int32.SIZE.
 
 ### Translation
 
-Suppose A is some type.
+Suppose A is some non-array type.
 
 * A.Array.at(ptr, i) reads the ith element of an array of A
   whose base address is ptr.  Not bounds checked.  If the base
@@ -370,7 +371,6 @@ Suppose A is some type.
   Ditto for setAt.
 
 NOTE: Arrays of atomics and synchronics, and operations on those, will appear.
-
 
 ## ```@new``` macro
 

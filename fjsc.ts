@@ -14,7 +14,7 @@
  *
  * One output file will be produced for each input file.  Each input
  * file must have extension .flat_xx where xx is typically js or ts.
- * On output the ".flat" qualifier will be stripped.
+ * On output the "flat_" qualifier will be stripped.
  *
  * ---
  *
@@ -71,6 +71,10 @@ class PrimitiveDefn extends Defn {
 
     get memory(): string {
 	return this._memory;
+    }
+
+    isQualified(): bool {
+	return this.primKind == PrimKind.Atomic || this.primKind == PrimKind.Synchronic;
     }
 }
 
@@ -442,7 +446,6 @@ function main(args: string[]):void {
 	    if (!(/.\.flat_[a-zA-Z0-9]+$/.test(input_file)))
 		throw new UsageError("Bad file name (must be *.flat_<extension>): " + input_file);
 	    let text = fs.readFileSync(input_file, "utf8");
-	    //let lines = text.split("\n");
 	    let [defs, residual] = collectDefinitions(input_file, text);
 	    let output_file = input_file.replace(/\.flat_([a-zA-Z0-9]+)$/, ".$1");
 	    allSources.push(new Source(input_file, output_file, defs, residual));
@@ -1810,32 +1813,154 @@ function gensym():string {
     return "__l" + gensym_counter++;
 }
 
-function reFormLines(ts:[Token,string][]): SourceLine[] {
-    return ts.map(function (x) { return x[1] }).join("").split("\n").map(function (l) { return new SourceLine("", 0, l) });
-}
+// FIXME: remove
+// function reFormLines(ts:[Token,string][]): SourceLine[] {
+//     return ts.map(function (x) { return x[1] }).join("").split("\n").map(function (l) { return new SourceLine("", 0, l) });
+// }
 
-function expandGlobalAccessorsAndMacros():void {
-    for ( let source of allSources ) {
-	let lines = reFormLines(source.tokens);
-	let nlines: SourceLine[] = [];
-	for ( let l of lines )
-	    nlines.push(new SourceLine(l.file, l.line, expandMacrosIn(l.file, l.line, l.text)));
-	source.lines = nlines;
-    }
-}
+// FIXME: remove
+// function expandGlobalAccessorsAndMacros():void {
+//     for ( let source of allSources ) {
+// 	let lines = reFormLines(source.tokens);
+// 	let nlines: SourceLine[] = [];
+// 	for ( let l of lines )
+// 	    nlines.push(new SourceLine(l.file, l.line, expandMacrosIn(l.file, l.line, l.text)));
+// 	source.lines = nlines;
+//     }
+// }
 
 function expandGlobalAccessorsAndMacros():void {
     for ( let source of allSources )
 	source.tokens = expandGlobalAccessorsAndMacrosFor(source.file, 1, source.tokens);
 }
 
-function decipherType(file:string, primaryName:string, path:string[]) : [PrimKind, boolean, string[]] {
+// MEN AT WORK
+
+function expandGlobalAccessorsAndMacrosFor(file:string, line:number, tokens:[Token,string][]): [Token,string][] {
+    let ts2 = new TokenTransducer(new Retokenizer(tokens), standardErrHandler(file), line);
+    for (;;) {
+	let [primaryName, primaryType, path, mark] = findQualifiedName(knownTypes, ts2)
+	if (primaryType == null)
+	    break;
+
+	let fullExpr = primaryName + "." + path.join(".");
+	let [qualifier, isArray, residualPath] = decipherQualifiedName(file, primaryName, path);
+	let needArguments = true;
+	let requireArityCheck = false;
+	let requiredArity = 0;
+	let functionName = "";	// function name if operator == "<invoke>"
+	let operator = "";	// in OpAttr or "<invoke>" or "<new>"
+	let args:[Token,string][][] = [];
+
+	if (ts2.justLookedAt(mark, Token.New)) {
+	    operator = "<new>";
+	    if (residualPath.length > 0)
+		throw new ProgramError(file, ts2.line, "Invalid type name for @new: " + fullExpr);
+	    if (isArray) {
+		requireArityCheck = true;
+		requiredArity = 1;
+	    }
+	    else {
+		needArguments = false;
+		if (ts2.lookingAt(Token.LParen))
+		    throw new ProgramError(file, ts2.line, "@new Type does not take arguments: " + fullExpr);
+	    }
+	}
+	else {
+	    if (residualPath.length == 0)
+		throw new ProgramError(file, ts2.line, "Field name and optional operator missing: " + fullExpr);
+
+	    operator = residualPath[residualPath.length-1];
+
+	    if (operator in OpAttr) {
+		residualPath.pop();
+		// This may leave the residualPath empty, eg for T.get(p) where T is a value type.
+		requireArityCheck = true;
+		requiredArity = OpAttr[operator].arity;
+	    }
+	    else {
+		if (primaryType.findAccessibleFieldFor(operator, residualPath.join("."))) {
+		    operator = "get";
+		    requireArityCheck = true;
+		    requiredArity = 1;
+		}
+		else {
+		    functionName = operator;
+		    operator = "<invoke>";
+		    residualPath.pop();
+		    if (residualPath.length != 0)
+			throw new ProgramError(file, ts2.line, "No field name allowed: " + fullExpr);
+		}
+	    }
+	}
+
+	if (needArguments) {
+	    ts2.match(Token.LParen);
+	    if (!ts2.lookingAt(Token.RParen)) {
+		args.push(parseArgument(t.file, ts2.line, ts2));
+		while (ts2.lookingAt(Token.Comma)) {
+		    ts2.advance();
+		    args.push(parseArgument(t.file, ts2.line, ts2));
+		}
+	    }
+	    ts2.match(Token.RParen);
+	}
+
+	// Appropriate operator for T.Array?
+	if (isArray) {
+	    switch (operator) {
+	    case "at":
+	    case "setAt":
+	    case "<new>":
+		break;
+	    default:
+		throw new ProgramError(t.file, ts2.line, "Inappropriate operator for array type: " + fullExpr);
+	    }
+	}
+
+	// Appropriate operator for T.qualified?
+	// decipherQualifiedName() already checked that.
+
+	// Appropriate arity for operator?
+	if (needArguments && requireArityCheck && args.length != requiredArity)
+	    throw new ProgramError(file, ts2.line, "Wrong number of arguments for operator: " + operator);
+
+	for ( let i=0 ; i < args.length ; i++ )
+	    args[i] = expandGlobalAccessorsAndMacrosFor(file, ts2.line, args[i]);
+
+	ts2.release(mark);
+	if (operator == "<new>") {
+	    if (isArray) {
+		// Issue #27 - implement this.
+		if (qualifier != PrimKind.None)
+		    throw new InternalError("Qualifiers on Array @new not yet implemented");
+		expandNewArray(ts2, primaryType, qualifier, args[0]);
+	    }
+	    else
+		expandNew(ts2, primaryName, primaryType);
+	}
+	else if (operator == "<invoke>") {
+	    expandInvoke(ts2, primaryName, primaryType, functionName, args);
+	}
+	else if (isArray)
+	    expandArrayRef(...);
+	else
+	    expandPropRef(...);
+    }
+    return ts2.tokens;
+}
+
+// primaryName is the first element of the qualifiedName and path[] contains the rest.
+// Strip off any qualifiers and return them along with the residual path.
+
+function decipherQualifiedName(file:string, primaryName:string, path:string[]) : [PrimKind, boolean, string[]] {
     let qualifier = PrimKind.None;
     let isArray = false;
+
     let k = 0;
     if (k < path.length && (path[k] == "synchronic" || path[k] == "atomic")) {
 	if (!knownTypes.test(path[k] + "/" + primaryName))
-	    throw new ProgramError(file, line, "Invalid type name: " + path.join("."));
+	    throw new ProgramError(file, line, "Invalid type name: " + primaryName + "." + path.join("."));
 	switch (path[k++]) {
 	case "synchronic": qualifier = PrimKind.Synchronic; break;
 	case "atomic": qualifier = PrimKind.Atomic; break;
@@ -1848,112 +1973,7 @@ function decipherType(file:string, primaryName:string, path:string[]) : [PrimKin
     return [qualifier, isArray, path.slice(k)];
 }
 
-// MEN AT WORK
-
-// General outline:
-//  For property and array access:
-//  - scan entire file for a path that starts with a known type name
-//  - for array access, the typename will be more elaborate, "PrimType(.atomic|.synchronic).Array
-//  - path requires operands (even "get" needs one)
-//  - path must be appropriate for operation
-//  - path must be appropriate for type
-// For @new, it is "@new" followwed by a type name (as for property and array access), but no path is allowed
-// We can use lookbehind to discover @new, I guess.
-// Operands need recursive expansion, again.
-
-function expandGlobalAccessorsAndMacrosFor(file:string, line:number, tokens:[Token,string][]): [Token,string][] {
-    let ts2 = new TokenTransducer(new Retokenizer(tokens), standardErrHandler(file), line);
-    for (;;) {
-	let [primaryName,primaryType,path,mark] = findQualifiedName(knownTypes, ts2)
-	if (primaryType == null)
-	    break;
-
-	let [qualifier, isArray, residualPath] = decipherType(file, primaryName, path);
-	let isNew = false;
-	let needArguments = true;
-	let requireArityCheck = false;
-	let requiredArity = 0;
-
-	if (ts2.justLookedAt(mark, Token.New)) {
-	    isNew = true;
-	    if (residualPath.length > 0)
-		throw new ProgramError(file, ts2.line, "Invalid type name for @new: " + primaryName + "." + path.join("."));
-	    if (isArray) {
-		requireArityCheck = true;
-		requiredArity = 1;
-	    }
-	    else {
-		if (ts2.lookingAt(Token.LParen))
-		    throw new ProgramError(file, ts2.line, "@new operator does not take arguments");
-		needArguments = false;
-	    }
-	}
-	else {
-	    // FIXME: requirements on residualPath
-
-	    if (!ts2.lookingAt(Token.LParen))
-		throw new ProgramError(t.file, ts2.line, "Operator requires arguments: " + operator);
-	    let operator = residualPath[residualPath.length-1];
-	    let args:[Token,string][][] = [];
-
-	    if (operator in OpAttr) {
-		residualPath.pop();
-		// Watch it, what about array access?
-		if (residualPath.length == 0)
-		    throw new ProgramError(t.file, ts2.line, "Operator requires nonempty path: " + operator);
-		requireArityCheck = true;
-		requiredArity = OpAttr[operator].arity;
-		var pathname = residualPath.join(".");
-		if (!primaryType.findAccessibleFieldFor(operator, pathname))
-		    throw new ProgramError(t.file, ts2.line, "Inappropriate operation for " + pathname);
-	    }
-	    else {
-		// Invocation or get.  Leave operator blank.
-		operator = "";
-		// TODO: Path must denote a method, right now that should just be an immediate check on the type
-		// TODO: If we know the method's arity we can record it here and check it below
-
-		// FIXME: more code for "get"
-	    }
-	}
-
-	// Arguments
-
-	ts2.match(Token.LParen);
-	if (!ts2.lookingAt(Token.RParen)) {
-	    args.push(parseArgument(t.file, ts2.line, ts2));
-	    while (ts2.lookingAt(Token.Comma)) {
-		ts2.advance();
-		args.push(parseArgument(t.file, ts2.line, ts2));
-	    }
-	}
-	ts2.match(Token.RParen);
-	// FIXME, wrong-ish
-	if (needArguments && requireArityCheck) {
-	    if (args.length != requiredArity)
-		throw new ProgramError(t.file, ts2.line, "Wrong number of arguments for operator: " + operator);
-	}
-
-	// TODO here: expand macros in arguments.  Can just call self
-	// recursively and then use the resulting token strings?
-
-	ts2.release(mark);
-	if (isNew && isArray)
-	    expandNewArray(ts2, primaryType, qualifier, args[0]);
-	else if (isNew)
-	    expandNew(ts2, primaryName, primaryType);
-	else if (isArray)
-	    expandArrayRef(...);
-	else
-	    expandPropRef(...);
-    }
-    return ts2.tokens;
-}
-
-function expandNewArray(ts2:TokenTransducer, primaryType:Defn, qualifier:PrimKind, expr:[Token,string][]):void {
-    // Issue #27 - implement this.
-    if (qualifier != PrimKind.None)
-	throw new InternalError("Qualifiers on array @new not yet implemented");
+function expandNewArray(ts2:TokenTransducer, primaryType:Defn, expr:[Token,string][]):void {
 
     // Issue #16: Parentheses around the outer call
     ts2.inject([Token.Other,
@@ -1966,6 +1986,18 @@ function expandNew(ts2:TokenTransducer, primaryName:string, primaryType:Defn):vo
     if (primaryType.kind == DefnKind.Class)
 	expr = primaryName + ".initInstance(" + expr + ")";
     ts2.inject([Token.Other, expr]);
+}
+
+function expandInvoke(ts2:TokenTransducer, primaryName:string, primaryType:Defn, functionName:string, args:[Token,string][][]) {
+    // Construct expr:
+    //    C.functionName(...args)
+    // ie, it's just the input
+    let expr = ...;
+    ts2.inject([Token.Other, expr]);
+}
+
+function expandArrayRef(...) {
+
 }
 
 function expandPropRef(primaryName:string, primaryType:Defn, path:string[], operation:string, args:[Token,string][][]) {
@@ -2150,6 +2182,7 @@ function loadFromRef(file:string, line:number,
     }
 }
 
+/// FIXME - remove this
 ////// OLD CODE BELOW
 
 function arrMacro(file:string, line:number, s:string, p:number, ms:RegExpExecArray):[string,number] {
