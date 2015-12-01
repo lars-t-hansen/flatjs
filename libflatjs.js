@@ -275,6 +275,9 @@ var FlatJS =
 	   : Date.now.bind(Date))
 };
 
+// FIXME: Apart from the allocator and the atomic store this is the same
+// as the ArrayBuffer version; merge them.
+
 function _FlatJS_init_sab(flatjs, sab, start, limit, initialize) {
     if ((start|0) != start || (limit|0) != limit)
 	throw new Error("Invalid bounds: " + start + " " + limit);
@@ -286,14 +289,14 @@ function _FlatJS_init_sab(flatjs, sab, start, limit, initialize) {
     if (len < 16)
 	throw new Error("The memory is too small even for metadata: " + sab.byteLength);
     flatjs.alloc = _FlatJS_alloc_sab;
-    _mem_int8 = new SharedInt8Array(sab, start, len);
-    _mem_uint8 = new SharedUint8Array(sab, start, len);
-    _mem_int16 = new SharedInt16Array(sab, start, len/2);
-    _mem_uint16 = new SharedUint16Array(sab, start, len/2);
-    _mem_int32 = new SharedInt32Array(sab, start, len/4);
-    _mem_uint32 = new SharedUint32Array(sab, start, len/4);
-    _mem_float32 = new SharedFloat32Array(sab, start, len/4);
-    _mem_float64 = new SharedFloat64Array(sab, start, len/8);
+    _mem_int8 = new Int8Array(sab, start, len);
+    _mem_uint8 = new Uint8Array(sab, start, len);
+    _mem_int16 = new Int16Array(sab, start, len/2);
+    _mem_uint16 = new Uint16Array(sab, start, len/2);
+    _mem_int32 = new Int32Array(sab, start, len/4);
+    _mem_uint32 = new Uint32Array(sab, start, len/4);
+    _mem_float32 = new Float32Array(sab, start, len/4);
+    _mem_float64 = new Float64Array(sab, start, len/8);
     if (initialize) {
 	_mem_int32[2] = len;
 	Atomics.store(_mem_int32, 1, 16);
