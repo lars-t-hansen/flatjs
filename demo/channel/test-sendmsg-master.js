@@ -22,7 +22,7 @@ var r = new ChannelReceiver(channel_state);
 // Kick off the worker and wait for a message that it is ready.
 
 w.onmessage = workerReady;
-w.postMessage([sab, iterations, channel_state], [sab]);
+w.postMessage([sab, iterations, channel_state]);
 
 console.log("Master waiting");
 
